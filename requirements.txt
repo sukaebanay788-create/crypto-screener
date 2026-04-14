@@ -3,3 +3,4 @@ pycoingecko
 pandas
 plotly
 requests
+streamlit-lightweight-charts
