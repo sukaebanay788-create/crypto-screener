@@ -27,7 +27,7 @@ def load_coins_list():
 @st.cache_data(ttl=300)
 def load_binance_klines(symbol, interval, limit=1000):
     """Загружает свечи напрямую с Binance API (без сторонних библиотек)"""
-  BINANCE_API_URL = "https://data-api.binance.vision/api/v3"
+    url = "https://data-api.binance.vision/api/v3"
     params = {
         "symbol": symbol,
         "interval": interval,
