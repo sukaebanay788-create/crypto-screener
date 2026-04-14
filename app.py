@@ -3,15 +3,14 @@ import pandas as pd
 import requests
 import plotly.graph_objects as go
 from pycoingecko import CoinGeckoAPI
+import datetime
 
 # ------------------ НАСТРОЙКА СТРАНИЦЫ ------------------
 st.set_page_config(layout="wide", page_title="Крипто-скринер")
 
 # ------------------ ИНИЦИАЛИЗАЦИЯ API ------------------
 cg = CoinGeckoAPI()
-
-# Публичный эндпоинт Bybit (работает без ключей)
-BYBIT_API_URL = "https://api.bybit.com/v5/market/kline"
+OKX_API_URL = "https://www.okx.com/api/v5/market/history-candles"
 
 # ------------------ ФУНКЦИИ ------------------
 @st.cache_data(ttl=60)
@@ -28,34 +27,33 @@ def load_coins_list():
         return pd.DataFrame(columns=['id', 'symbol', 'name', 'current_price', 'price_change_percentage_24h'])
 
 @st.cache_data(ttl=300)
-def load_bybit_klines(symbol, interval, limit=1000):
-    """Загружает свечи через прямой запрос к Bybit API (публичный, без ключей)"""
+def load_okx_klines(instId, bar="5m", limit=300):
+    """Загружает свечи через прямой запрос к OKX API (публичный, без ключей)"""
     try:
         params = {
-            "category": "spot",  # спотовый рынок
-            "symbol": symbol,
-            "interval": interval,
+            "instId": instId,
+            "bar": bar,
             "limit": limit
         }
-        response = requests.get(BYBIT_API_URL, params=params, timeout=10)
+        response = requests.get(OKX_API_URL, params=params, timeout=10)
         response.raise_for_status()
         data = response.json()
 
-        if data['retCode'] != 0:
-            st.error(f"Ошибка API Bybit: {data['retMsg']}")
+        if data['code'] != '0':
+            st.error(f"Ошибка API OKX: {data['msg']}")
             return pd.DataFrame()
 
-        klines = data['result']['list']
-        # Bybit возвращает свечи в обратном порядке (новые первыми)
+        klines = data['data']
+        # OKX возвращает свечи в обратном порядке
         klines.reverse()
 
-        df = pd.DataFrame(klines, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume', 'turnover'])
+        df = pd.DataFrame(klines, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume', 'volCcy', 'volCcyQuote', 'confirm'])
         df['timestamp'] = pd.to_datetime(df['timestamp'].astype(float), unit='ms')
         for col in ['open', 'high', 'low', 'close']:
             df[col] = df[col].astype(float)
         return df
     except Exception as e:
-        st.error(f"Ошибка загрузки данных Bybit: {e}")
+        st.error(f"Ошибка загрузки данных OKX: {e}")
         return pd.DataFrame()
 
 # ------------------ ЗАГРУЗКА СПИСКА МОНЕТ ------------------
@@ -99,13 +97,12 @@ with col_chart:
     with header_col2:
         timeframe = st.selectbox(
             "Таймфрейм",
-            options=['1', '5', '30', '60', '240'],  # Bybit использует минуты
-            format_func=lambda x: f"{x} мин" if int(x) < 60 else f"{int(x)//60} ч",
-            index=1  # 5 мин по умолчанию
+            options=['1m', '5m', '30m', '1H', '4H'],
+            index=1  # 5m по умолчанию
         )
 
-    bybit_symbol = f"{selected_symbol}USDT"
-    df = load_bybit_klines(bybit_symbol, interval=timeframe, limit=1000)
+    okx_symbol = f"{selected_symbol}-USDT"
+    df = load_okx_klines(okx_symbol, bar=timeframe, limit=1000)
 
     if not df.empty:
         fig = go.Figure()
