@@ -12,8 +12,8 @@ st.markdown("""
     .stPlotlyChart { margin: 0; padding: 0; }
     div[data-testid="column"] { padding: 0px !important; }
     .element-container { margin-bottom: 0px !important; }
-    button[kind="secondary"], button[kind="primary"] { 
-        border-radius: 4px; font-size: 13px; padding: 4px 8px; margin: 1px 0;
+    button[kind="secondary"], button[kind="primary"] {
+        border-radius: 3px; font-size: 11px; padding: 2px 6px; margin: 0; min-height: 28px;
     }
     #MainMenu, header, footer {visibility: hidden;}
     .up { color: #00d084; }
@@ -96,40 +96,21 @@ symbols = get_symbols()
 chart_area, sidebar = st.columns([5, 1])
 
 with chart_area:
-    # Top bar
-    col_sym, col_tfs, _ = st.columns([1, 3, 1])
-    
-    with col_sym:
-        st.markdown(f"## {st.session_state.coin.replace('/USDT', '')}")
-    
-    with col_tfs:
-        tfs = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '12h', '1d']
-        cols = st.columns(len(tfs))
-        for i, tf in enumerate(tfs):
-            with cols[i]:
-                active = tf == st.session_state.tf
-                if st.button(tf, key=f"tf_{tf}",
-                            type="primary" if active else "secondary",
-                            use_container_width=True):
-                    st.session_state.tf = tf
-                    st.rerun()
+    # TF bar only
+    tfs = ['1m', '5m', '30m', '4h']
+    cols = st.columns(len(tfs))
+    for i, tf in enumerate(tfs):
+        with cols[i]:
+            active = tf == st.session_state.tf
+            if st.button(tf, key=f"tf_{tf}",
+                        type="primary" if active else "secondary",
+                        use_container_width=True):
+                st.session_state.tf = tf
+                st.rerun()
 
-    # Chart
+    # Chart — full height
     try:
         df = get_chart_data(st.session_state.coin, st.session_state.tf)
-        current = df.iloc[-1]['c']
-        prev = df.iloc[-2]['c']
-        chg = ((current - prev) / prev) * 100
-        color = "#00d084" if chg >= 0 else "#ff4757"
-        
-        col_p1, col_p2, col_p3 = st.columns([1, 1, 3])
-        with col_p1:
-            st.markdown(f"### {current:.6f}")
-        with col_p2:
-            st.markdown(f"### <span style='color:{color}'>{chg:+.2f}%</span>",
-                       unsafe_allow_html=True)
-        with col_p3:
-            pass
         
         fig = go.Figure(data=[go.Candlestick(
             x=df['time'], open=df['o'], high=df['h'], low=df['l'], close=df['c'],
@@ -138,7 +119,7 @@ with chart_area:
         )])
         
         fig.update_layout(
-            height=620,
+            height=750,
             margin=dict(l=0, r=0, t=0, b=0),
             xaxis=dict(rangeslider=dict(visible=False), showgrid=False, zeroline=False),
             yaxis=dict(showgrid=True, gridcolor='#1a1a1a', side='right', zeroline=False),
