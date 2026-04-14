@@ -9,7 +9,8 @@ st.set_page_config(layout="wide")
 
 # ------------------ ИНИЦИАЛИЗАЦИЯ API ------------------
 cg = CoinGeckoAPI()
-binance_client = Client()  # Публичный клиент Binance (без ключей)
+# Используем альтернативный публичный API Binance
+binance_client = Client(tld="us")
 
 # ------------------ ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ------------------
 @st.cache_data(ttl=60)
