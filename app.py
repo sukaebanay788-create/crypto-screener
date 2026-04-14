@@ -21,12 +21,26 @@ st.markdown("""
 
 @st.cache_resource
 def get_exchange():
-    # Binance: отдаёт 1000 свечей за ОДИН запрос, быстрый API
-    ex = ccxt.binance({'enableRateLimit': True, 'options': {'defaultType': 'spot'}})
-    ex.load_markets()
-    return ex
+    # Пробуем биржи по порядку — та что доступна
+    for name in ['binance', 'okx', 'bybit', 'bitget']:
+        try:
+            if name == 'binance':
+                ex = ccxt.binance({'enableRateLimit': True, 'options': {'defaultType': 'spot'}})
+            elif name == 'okx':
+                ex = ccxt.okx({'enableRateLimit': True, 'options': {'defaultType': 'spot'}})
+            elif name == 'bybit':
+                ex = ccxt.bybit({'enableRateLimit': True, 'options': {'defaultType': 'spot'}})
+            elif name == 'bitget':
+                ex = ccxt.bitget({'enableRateLimit': True, 'options': {'defaultType': 'spot'}})
+            ex.load_markets()
+            return ex
+        except Exception:
+            continue
+    st.error("Не удалось подключиться ни к одной бирже")
+    st.stop()
 
 ex = get_exchange()
+exchange_name = ex.id.upper()
 
 @st.cache_data(ttl=120)
 def get_symbols():
@@ -67,8 +81,9 @@ def get_screener_data(symbols):
     return data
 
 def get_chart_data(symbol, timeframe):
-    """Binance отдаёт до 1000 свечей за ОДИН запрос — без пагинации!"""
-    candles = ex.fetch_ohlcv(symbol, timeframe, limit=1000)
+    """Binance отдаёт 1000, другие биржи могут меньше — без пагинации"""
+    limit = 1000 if exchange_name == 'BINANCE' else 500
+    candles = ex.fetch_ohlcv(symbol, timeframe, limit=limit)
     if not candles:
         return pd.DataFrame()
     df = pd.DataFrame(candles, columns=['t','o','h','l','c','v'])
@@ -97,7 +112,10 @@ chart_area, sidebar = st.columns([5, 1])
 with chart_area:
     # TF buttons
     tfs = ['1m', '5m', '30m', '4h']
-    cols = st.columns(len(tfs))
+    col_ex, col_tfs = st.columns([1, 3])
+    with col_ex:
+        st.markdown(f"`{exchange_name}`")
+    cols = col_tfs.columns(len(tfs))
     for i, tf in enumerate(tfs):
         with cols[i]:
             active = tf == st.session_state.tf
