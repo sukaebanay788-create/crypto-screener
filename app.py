@@ -1,125 +1,140 @@
 import streamlit as st
-import yfinance as yf
+import ccxt
 import pandas as pd
-import matplotlib.pyplot as plt
-import time
-from mplfinance.original_flavor import candlestick_ohlc
-import matplotlib.dates as mpl_dates
+import plotly.graph_objects as go
+from datetime import datetime, timedelta
 
-st.set_page_config(page_title="FxDash", page_icon="💸", layout="wide")
-st.title("Real-Time Financial Dashboard")
+# Настройка страницы: широкий режим, без бокового меню по умолчанию
+st.set_page_config(layout="wide", page_title="Crypto Screener")
 
-# Define the symbols
-symbols = ["GBPJPY=X", "AUDJPY=X", "BTC-USD"]
+# Убираем отступы и промежутки между колонками
+st.markdown("""
+<style>
+    /* Убираем стандартные паддинги Streamlit */
+    .block-container {
+        padding-top: 1rem;
+        padding-bottom: 0rem;
+        padding-left: 0rem;
+        padding-right: 0rem;
+    }
+    /* Убираем отступы у колонок */
+    div[data-testid="column"] {
+        padding: 0px !important;
+    }
+    /* Убираем лишние границы */
+    .stPlotlyChart {
+        margin: 0px;
+        padding: 0px;
+    }
+    /* Список монет – компактный шрифт */
+    .coin-list-item {
+        font-size: 14px;
+        padding: 4px 8px;
+        cursor: pointer;
+        border-bottom: 1px solid #333;
+    }
+    .coin-list-item:hover {
+        background-color: #2c3e50;
+    }
+</style>
+""", unsafe_allow_html=True)
 
-# Define the layout
-col1, col2 = st.columns(2)
+# Инициализация биржи (Binance, публичные данные)
+@st.cache_resource
+def init_exchange():
+    return ccxt.binance({
+        'enableRateLimit': True,
+    })
 
-# Placeholder for charts
-gbpjpy_chart = col1.empty()
-audjpy_chart = col2.empty()
-btcusd_chart = st.empty()
+exchange = init_exchange()
 
-while True:
-    # Fetch data for each symbol
-    data = {}
-    for symbol in symbols:
-        data[symbol] = yf.download(symbol, period="1wk", interval="15m")
+# Получение списка торгуемых пар USDT
+@st.cache_data(ttl=300)
+def get_usdt_symbols():
+    markets = exchange.load_markets()
+    usdt_pairs = [symbol for symbol in markets if symbol.endswith('/USDT')]
+    # Оставляем только популярные монеты (можно расширить)
+    popular = ['BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'SOL/USDT', 'XRP/USDT',
+               'ADA/USDT', 'DOGE/USDT', 'MATIC/USDT', 'DOT/USDT', 'LTC/USDT',
+               'AVAX/USDT', 'LINK/USDT', 'UNI/USDT', 'ATOM/USDT', 'ETC/USDT']
+    # Добавляем все остальные, но ограничим первыми 50 для скорости
+    result = popular + [p for p in usdt_pairs if p not in popular][:35]
+    return result
 
-    # Create candlestick charts
-    fig_gbpjpy, ax_gbpjpy = plt.subplots()
-    gbpjpy_data = data["GBPJPY=X"].copy()
+# Получение OHLCV данных
+@st.cache_data(ttl=60)
+def fetch_ohlcv(symbol, timeframe='1h', limit=200):
+    try:
+        ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+        return df
+    except Exception as e:
+        st.error(f"Ошибка загрузки данных: {e}")
+        return pd.DataFrame()
 
-    # Filter data to last 24 hours
-    gbpjpy_data = gbpjpy_data.iloc[-96:] 
+# Сессия для хранения выбранной монеты
+if 'selected_symbol' not in st.session_state:
+    st.session_state.selected_symbol = 'BTC/USDT'
 
-    gbpjpy_data['Date'] = gbpjpy_data.index.map(mpl_dates.date2num)
-    gbpjpy_values = [tuple(x) for x in gbpjpy_data[['Date', 'Open', 'High', 'Low', 'Close']].values]
-    fig_gbpjpy, ax_gbpjpy = plt.subplots()
-    ax_gbpjpy.set_facecolor('black')
-    candlestick_ohlc(ax_gbpjpy, gbpjpy_values, width=0.0006, colorup='g', colordown='r')
-    ax_gbpjpy.set_title("GBPJPY")
-    ax_gbpjpy.xaxis.set_major_formatter(mpl_dates.DateFormatter('%H:%M'))
+# Загружаем список символов
+symbols = get_usdt_symbols()
 
-    # Calculate Quarter Theory levels
-    last_price = gbpjpy_data['Close'].iloc[-1].item()
-    nearest_quarter = round(last_price * 4) / 4
-    upper_quarter = nearest_quarter + 0.250
-    lower_quarter = nearest_quarter - 0.250
+# Создаём две колонки: левая (график) – широкая, правая (список) – узкая
+left_col, right_col = st.columns([5, 1], gap="small")
 
-    # Overlay Quarter Theory levels
-    ax_gbpjpy.axhline(upper_quarter, color='green', linestyle='--')
-    ax_gbpjpy.text(x=gbpjpy_data['Date'].iloc[-1], y=upper_quarter, s=str(round(upper_quarter, 3)), color='green')
-    ax_gbpjpy.axhline(lower_quarter, color='red', linestyle='--')
-    ax_gbpjpy.text(x=gbpjpy_data['Date'].iloc[-1], y=lower_quarter, s=str(round(lower_quarter, 3)), color='red')
+# --- ЛЕВАЯ КОЛОНКА: ГРАФИК ---
+with left_col:
+    st.header(f"{st.session_state.selected_symbol} – 1H", anchor=False)
+    
+    # Получаем данные
+    df = fetch_ohlcv(st.session_state.selected_symbol, timeframe='1h', limit=200)
+    
+    if not df.empty:
+        # Строим свечной график Plotly
+        fig = go.Figure(data=[go.Candlestick(
+            x=df['timestamp'],
+            open=df['open'],
+            high=df['high'],
+            low=df['low'],
+            close=df['close'],
+            name='OHLC',
+            increasing_line_color='#26a69a',
+            decreasing_line_color='#ef5350'
+        )])
+        
+        fig.update_layout(
+            height=700,  # почти весь экран
+            margin=dict(l=10, r=10, t=30, b=10),
+            xaxis_rangeslider_visible=False,
+            template='plotly_dark',
+            showlegend=False,
+            xaxis=dict(showgrid=False),
+            yaxis=dict(showgrid=True, gridcolor='#333'),
+            paper_bgcolor='#0e1117',
+            plot_bgcolor='#0e1117'
+        )
+        
+        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+    else:
+        st.warning("Нет данных для отображения")
 
-    # Calculate and overlay 50-period EMA
-    ema_50 = data["GBPJPY=X"]['Close'].ewm(span=50).mean()
-    ax_gbpjpy.plot(gbpjpy_data['Date'], ema_50.iloc[-96:], color='white', label='EMA 50')
-
-    gbpjpy_chart.pyplot(fig_gbpjpy, use_container_width=True)
-
-    audjpy_data = data["AUDJPY=X"].copy()
-    audjpy_data['Date'] = audjpy_data.index.map(mpl_dates.date2num)
-
-    # Filter data to last 24 hours
-    audjpy_data = audjpy_data.iloc[-96:] 
-
-    audjpy_values = [tuple(x) for x in audjpy_data[['Date', 'Open', 'High', 'Low', 'Close']].values]
-    fig_audjpy, ax_audjpy = plt.subplots()
-    ax_audjpy.set_facecolor('black')
-    candlestick_ohlc(ax_audjpy, audjpy_values, width=0.0006, colorup='g', colordown='r')
-    ax_audjpy.set_title("AUDJPY")
-    ax_audjpy.xaxis.set_major_formatter(mpl_dates.DateFormatter('%H:%M'))
-
-    # Calculate Quarter Theory levels
-    last_price = audjpy_data['Close'].iloc[-1].item()
-    nearest_quarter = round(last_price * 4) / 4
-    upper_quarter = nearest_quarter + 0.250
-    lower_quarter = nearest_quarter - 0.250
-
-    # Overlay Quarter Theory levels
-    ax_audjpy.axhline(upper_quarter, color='green', linestyle='--')
-    ax_audjpy.text(x=audjpy_data['Date'].iloc[-1], y=upper_quarter, s=str(round(upper_quarter, 3)), color='green')
-    ax_audjpy.axhline(lower_quarter, color='red', linestyle='--')
-    ax_audjpy.text(x=audjpy_data['Date'].iloc[-1], y=lower_quarter, s=str(round(lower_quarter, 3)), color='red')
-
-    # Calculate and overlay 50-period EMA
-    ema_50 = data["AUDJPY=X"]['Close'].ewm(span=50).mean()
-    ax_audjpy.plot(audjpy_data['Date'], ema_50.iloc[-96:], color='white', label='EMA 50')
-
-    audjpy_chart.pyplot(fig_audjpy, use_container_width=True)
-
-    btcusd_data = data["BTC-USD"].copy()
-    btcusd_data = btcusd_data.iloc[-96:] 
-    btcusd_data['Date'] = btcusd_data.index.map(mpl_dates.date2num)
-    btcusd_values = [tuple(x) for x in btcusd_data[['Date', 'Open', 'High', 'Low', 'Close']].values]
-    fig_btcusd, ax_btcusd = plt.subplots()
-    ax_btcusd.set_facecolor('black')
-    candlestick_ohlc(ax_btcusd, btcusd_values, width=0.0006, colorup='g', colordown='r')
-    ax_btcusd.set_title("BTCUSD")
-    ax_btcusd.xaxis.set_major_formatter(mpl_dates.DateFormatter('%H:%M'))
-
-    # Kairi Relative Index (KRI) with Arrows
-    length = 14  # From kairi.pine
-    src = btcusd_data['Close']  # Source (close price)
-    sma = src.rolling(window=length).mean()
-    kri = 100 * (src - sma) / sma
-
-    # Buy/Sell signals
-    buySignal = pd.Series(False, index=btcusd_data.index)
-    sellSignal = pd.Series(False, index=btcusd_data.index)
-    for i in range(1, len(btcusd_data)):
-        if kri.iloc[i-1].item() < 0 and kri.iloc[i].item() >= 0:
-            buySignal.iloc[i] = True
-        elif kri.iloc[i-1].item() > 0 and kri.iloc[i].item() <= 0:
-            sellSignal.iloc[i] = True
-
-    # Plot Buy/Sell signals
-    ax_btcusd.plot(btcusd_data['Date'][buySignal.values], btcusd_data['Low'][buySignal.values], '^', markersize=5, color='green', label='Buy Signal')
-    ax_btcusd.plot(btcusd_data['Date'][sellSignal.values], btcusd_data['High'][sellSignal.values], 'v', markersize=5, color='red', label='Sell Signal')
-
-    btcusd_chart.pyplot(fig_btcusd, use_container_width=True)
-
-    time.sleep(60)
-    st.rerun()
+# --- ПРАВАЯ КОЛОНКА: СПИСОК МОНЕТ ---
+with right_col:
+    st.markdown("**📋 Все монеты (USDT)**")
+    
+    # Строка поиска (компактная)
+    search = st.text_input("🔍 Поиск", placeholder="BTC, ETH...", label_visibility="collapsed")
+    
+    filtered_symbols = symbols
+    if search:
+        filtered_symbols = [s for s in symbols if search.upper() in s]
+    
+    # Контейнер для списка (фиксированная высота с прокруткой)
+    with st.container(height=650):
+        for sym in filtered_symbols:
+            # Простая кнопка без рамки, стилизованная как строка списка
+            if st.button(sym, key=f"btn_{sym}", use_container_width=True,
+                        type="secondary" if sym != st.session_state.selected_symbol else "primary"):
+                st.session_state.selected_symbol = sym
+                st.rerun()
