@@ -1,4 +1,4 @@
-streamlit==1.27.2
-ccxt==4.0.0
-plotly==5.14.1
-pandas==1.5.3
+streamlit
+ccxt
+plotly
+pandas
