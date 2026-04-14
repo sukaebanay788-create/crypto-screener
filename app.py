@@ -16,8 +16,6 @@ st.markdown("""
         border-radius: 3px; font-size: 11px; padding: 2px 6px; margin: 0; min-height: 28px;
     }
     #MainMenu, header, footer {visibility: hidden;}
-    .up { color: #00d084; }
-    .down { color: #ff4757; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -36,7 +34,7 @@ def get_symbols():
 
 @st.cache_data(ttl=20)
 def get_screener_data(symbols):
-    """Fetch screener data — cached for 20 sec"""
+    """Screener data — cached 20 sec, not affected by coin switch"""
     data = []
     try:
         tickers = ex.fetch_tickers(symbols[:60])
@@ -44,52 +42,51 @@ def get_screener_data(symbols):
             ticker = tickers.get(sym, {})
             price = ticker.get('last', 0) or 0
             change24 = ticker.get('percentage', 0) or 0
-            volume = ticker.get('quoteVolume', 0) or 0
             
-            # 5m change
+            change5 = 0
+            change15 = 0
             try:
                 c5 = ex.fetch_ohlcv(sym, '5m', limit=12)
-                change5 = 0
                 if len(c5) >= 2:
                     change5 = ((c5[-1][4] - c5[0][4]) / c5[0][4]) * 100
-            except:
-                change5 = 0
+            except: pass
                 
-            # 15m change
             try:
                 c15 = ex.fetch_ohlcv(sym, '15m', limit=12)
-                change15 = 0
                 if len(c15) >= 2:
                     change15 = ((c15[-1][4] - c15[0][4]) / c15[0][4]) * 100
-            except:
-                change15 = 0
+            except: pass
             
             data.append({'symbol': sym, 'price': price, 'change24': change24,
-                        'change5': change5, 'change15': change15, 'volume': volume})
-    except:
-        pass
+                        'change5': change5, 'change15': change15})
+    except: pass
     return data
 
-@st.cache_data(ttl=5)
-def get_chart_data(symbol, timeframe, limit=1000):
-    """Fetch chart data — maximum candles (100 per request, multiple requests)"""
-    all_candles = []
-    since = None
-    # Fetch up to 10 batches = 1000 candles
-    for _ in range(10):
-        try:
-            candles = ex.fetch_ohlcv(symbol, timeframe, limit=100, since=since)
-            if not candles:
-                break
-            all_candles = candles + all_candles
-            if len(candles) < 100:
-                break
-            since = candles[0][0] - 1
-            if len(all_candles) >= limit:
-                break
-        except:
+def get_chart_data(symbol, timeframe):
+    """Chart data — fresh fetch with pagination, no cache for real-time"""
+    tf_ms = {'1m':60000,'5m':300000,'30m':1800000,'4h':14400000}
+    candle_ms = tf_ms.get(timeframe, 3600000)
+    
+    candles = ex.fetch_ohlcv(symbol, timeframe, limit=100)
+    if not candles:
+        return pd.DataFrame()
+    
+    all_candles = candles[:]
+    for _ in range(9):
+        time.sleep(0.1)
+        oldest_ts = all_candles[0][0]
+        since = oldest_ts - (100 * candle_ms)
+        older = ex.fetch_ohlcv(symbol, timeframe, limit=100, since=since)
+        if not older:
             break
-    df = pd.DataFrame(all_candles[-limit:], columns=['t', 'o', 'h', 'l', 'c', 'v'])
+        older = [c for c in older if c[0] < oldest_ts]
+        if not older:
+            break
+        all_candles = older + all_candles
+        if len(older) < 100:
+            break
+    
+    df = pd.DataFrame(all_candles, columns=['t','o','h','l','c','v'])
     df['time'] = pd.to_datetime(df['t'], unit='ms')
     return df
 
@@ -102,16 +99,18 @@ if 'sort' not in st.session_state:
     st.session_state.sort = 'change5'
 if 'search' not in st.session_state:
     st.session_state.search = ''
-if 'last_update' not in st.session_state:
-    st.session_state.last_update = 0
+if 'last_fetch' not in st.session_state:
+    st.session_state.last_fetch = 0
 
 symbols = get_symbols()
+screen_data = get_screener_data(symbols)
 
 # ── Layout ──
 chart_area, sidebar = st.columns([5, 1])
 
+# ── CHART AREA ──
 with chart_area:
-    # TF bar only
+    # TF buttons
     tfs = ['1m', '5m', '30m', '4h']
     cols = st.columns(len(tfs))
     for i, tf in enumerate(tfs):
@@ -123,35 +122,59 @@ with chart_area:
                 st.session_state.tf = tf
                 st.rerun()
 
-    # Chart — full height
-    try:
-        df = get_chart_data(st.session_state.coin, st.session_state.tf)
-        
-        fig = go.Figure(data=[go.Candlestick(
-            x=df['time'], open=df['o'], high=df['h'], low=df['l'], close=df['c'],
-            increasing=dict(line=dict(color='#00d084'), fillcolor='#00d084'),
-            decreasing=dict(line=dict(color='#ff4757'), fillcolor='#ff4757')
-        )])
-        
-        fig.update_layout(
-            height=750,
-            margin=dict(l=0, r=0, t=0, b=0),
-            xaxis=dict(rangeslider=dict(visible=False), showgrid=False, zeroline=False),
-            yaxis=dict(showgrid=True, gridcolor='#1a1a1a', side='right', zeroline=False),
-            plot_bgcolor='#0a0a0a', paper_bgcolor='#0a0a0a',
-            dragmode='pan', showlegend=False
-        )
-        fig.update_xaxes(showline=False, tickfont=dict(size=10))
-        fig.update_yaxes(showline=False, tickfont=dict(size=10))
-        
-        st.plotly_chart(fig, use_container_width=True, config={
-            'scrollZoom': True, 'displayModeBar': False,
-            'doubleClick': 'reset', 'modeBarButtonsToRemove': ['lasso2d', 'select2d']
-        })
-        
-    except Exception as e:
-        st.warning(f"No data: {e}")
+    # Auto-refresh chart every 5 sec
+    now = time.time()
+    chart_container = st.container()
+    
+    with chart_container:
+        try:
+            df = get_chart_data(st.session_state.coin, st.session_state.tf)
+            
+            if not df.empty:
+                current = df.iloc[-1]['c']
+                prev = df.iloc[-2]['c'] if len(df) > 1 else current
+                chg = ((current - prev) / prev) * 100
+                color = "#00d084" if chg >= 0 else "#ff4757"
+                
+                fig = go.Figure(data=[go.Candlestick(
+                    x=df['time'], open=df['o'], high=df['h'], low=df['l'], close=df['c'],
+                    increasing=dict(line=dict(color='#00d084'), fillcolor='#00d084'),
+                    decreasing=dict(line=dict(color='#ff4757'), fillcolor='#ff4757')
+                )])
+                
+                fig.update_layout(
+                    height=720,
+                    margin=dict(l=0, r=0, t=0, b=0),
+                    xaxis=dict(rangeslider=dict(visible=False), showgrid=False, zeroline=False),
+                    yaxis=dict(showgrid=True, gridcolor='#1a1a1a', side='right', zeroline=False),
+                    plot_bgcolor='#0a0a0a', paper_bgcolor='#0a0a0a',
+                    dragmode='pan', showlegend=False
+                )
+                fig.update_xaxes(showline=False, tickfont=dict(size=10))
+                fig.update_yaxes(showline=False, tickfont=dict(size=10))
+                
+                st.plotly_chart(fig, use_container_width=True, config={
+                    'scrollZoom': True, 'displayModeBar': False,
+                    'doubleClick': 'reset', 'modeBarButtonsToRemove': ['lasso2d', 'select2d']
+                })
+                
+                # Price + change display
+                st.markdown(
+                    f"`{current:.6f}`  "
+                    f"<span style='color:{color};font-weight:bold;font-size:18px'>{chg:+.2f}%</span>",
+                    unsafe_allow_html=True
+                )
+        except Exception as e:
+            st.warning(str(e))
 
+    # Auto-refresh
+    st_autorefresh = now - st.session_state.last_fetch > 5
+    if st_autorefresh:
+        st.session_state.last_fetch = now
+        time.sleep(0.5)
+        st.rerun()
+
+# ── SIDEBAR ──
 with sidebar:
     # Sort buttons
     s1, s2, s3 = st.columns(3)
@@ -175,24 +198,16 @@ with sidebar:
     search_val = st.text_input("", key="search_input", label_visibility="collapsed",
                                placeholder="BTC...")
     
-    # Auto-refresh timer
-    now = time.time()
-    if now - st.session_state.last_update > 20:
-        st.session_state.last_update = now
-    
-    # Get cached screener data
-    screen_data = get_screener_data(symbols)
-    
-    # Sort
+    # Sort screen_data
     screen_data.sort(key=lambda x: x[st.session_state.sort], reverse=True)
     
-    # Filter
+    # Filter — instant, no API calls
     filtered = screen_data
     if search_val:
         s = search_val.upper()
         filtered = [x for x in screen_data if s in x['symbol'].replace('/USDT', '')]
     
-    # List
+    # Coin list
     with st.container(height=550):
         for item in filtered[:40]:
             sym = item['symbol']
