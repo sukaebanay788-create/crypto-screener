@@ -48,7 +48,6 @@ def get_usdt_symbols():
     return result
 
 def fetch_ohlcv_raw(symbol, timeframe, limit, since=None):
-    """Загружает сырые данные с биржи"""
     try:
         if since:
             ohlcv = exchange.fetch_ohlcv(symbol, timeframe, since=since, limit=limit)
@@ -66,7 +65,7 @@ def ohlcv_to_df(ohlcv):
     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
     return df
 
-# Инициализация сессии
+# Сессия
 if 'selected_symbol' not in st.session_state:
     st.session_state.selected_symbol = 'BTC/USDT'
 if 'selected_tf' not in st.session_state:
@@ -77,43 +76,23 @@ if 'last_symbol' not in st.session_state:
     st.session_state.last_symbol = None
 if 'last_tf' not in st.session_state:
     st.session_state.last_tf = None
-if 'load_more' not in st.session_state:
-    st.session_state.load_more = False
 
-# Загружаем список монет
 symbols = get_usdt_symbols()
 if not symbols:
     st.stop()
 
-# Проверяем, изменились ли монета или таймфрейм
+# Проверка на смену монеты/таймфрейма
 need_reload = (st.session_state.selected_symbol != st.session_state.last_symbol or
                st.session_state.selected_tf != st.session_state.last_tf)
-
 if need_reload:
     st.session_state.cached_df = pd.DataFrame()
     st.session_state.last_symbol = st.session_state.selected_symbol
     st.session_state.last_tf = st.session_state.selected_tf
 
-# Основная загрузка данных
+# Первая загрузка или обновление
 if st.session_state.cached_df.empty:
-    # Первая загрузка — 200 свечей
     raw = fetch_ohlcv_raw(st.session_state.selected_symbol, st.session_state.selected_tf, limit=200)
     st.session_state.cached_df = ohlcv_to_df(raw)
-else:
-    # Проверяем, нужно ли догрузить историю
-    if st.session_state.load_more and not st.session_state.cached_df.empty:
-        oldest_ts = st.session_state.cached_df['timestamp'].min()
-        # since должен быть в миллисекундах, берем самый старый timestamp минус 1 мс, чтобы не дублировать
-        since = int(oldest_ts.timestamp() * 1000) - 1
-        # Загружаем ещё 100 свечей до oldest_ts
-        older_raw = fetch_ohlcv_raw(st.session_state.selected_symbol, st.session_state.selected_tf,
-                                    limit=100, since=since)
-        older_df = ohlcv_to_df(older_raw)
-        if not older_df.empty:
-            # Объединяем и удаляем дубликаты по timestamp
-            combined = pd.concat([older_df, st.session_state.cached_df]).drop_duplicates('timestamp').sort_values('timestamp')
-            st.session_state.cached_df = combined
-        st.session_state.load_more = False
 
 # Интерфейс
 left_col, right_col = st.columns([5, 1], gap="small")
@@ -161,23 +140,22 @@ with left_col:
             plot_bgcolor='#0e1117'
         )
 
-        # Получаем данные о текущем отображении из plotly events
-        chart_data = st.plotly_chart(
+        st.plotly_chart(
             fig,
             use_container_width=True,
-            config={'scrollZoom': True, 'displayModeBar': False, 'doubleClick': 'reset'},
-            key="candlestick_chart"
+            config={'scrollZoom': True, 'displayModeBar': False, 'doubleClick': 'reset'}
         )
 
-        # Проверяем событие relayoutData
-        if chart_data and 'xaxis.range[0]' in chart_data:
-            left_bound = pd.to_datetime(chart_data['xaxis.range[0]'])
-            min_ts = df['timestamp'].min()
-            # Если пользователь приблизился к началу данных (разница меньше 10% от всего диапазона)
-            total_range = (df['timestamp'].max() - min_ts).total_seconds()
-            distance = (left_bound - min_ts).total_seconds()
-            if total_range > 0 and distance < total_range * 0.1:
-                st.session_state.load_more = True
+        # Кнопка для загрузки более ранней истории
+        if st.button("⬅️ Загрузить ещё историю", use_container_width=False):
+            oldest_ts = df['timestamp'].min()
+            since = int(oldest_ts.timestamp() * 1000) - 1
+            older_raw = fetch_ohlcv_raw(st.session_state.selected_symbol, st.session_state.selected_tf,
+                                        limit=100, since=since)
+            older_df = ohlcv_to_df(older_raw)
+            if not older_df.empty:
+                combined = pd.concat([older_df, df]).drop_duplicates('timestamp').sort_values('timestamp')
+                st.session_state.cached_df = combined
                 st.rerun()
     else:
         st.warning("Нет данных для отображения")
