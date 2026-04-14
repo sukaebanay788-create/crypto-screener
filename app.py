@@ -71,10 +71,25 @@ def get_screener_data(symbols):
     return data
 
 @st.cache_data(ttl=5)
-def get_chart_data(symbol, timeframe, limit=300):
-    """Fetch chart data — cached for 5 sec, only for current symbol"""
-    candles = ex.fetch_ohlcv(symbol, timeframe, limit=limit)
-    df = pd.DataFrame(candles, columns=['t', 'o', 'h', 'l', 'c', 'v'])
+def get_chart_data(symbol, timeframe, limit=1000):
+    """Fetch chart data — maximum candles (100 per request, multiple requests)"""
+    all_candles = []
+    since = None
+    # Fetch up to 10 batches = 1000 candles
+    for _ in range(10):
+        try:
+            candles = ex.fetch_ohlcv(symbol, timeframe, limit=100, since=since)
+            if not candles:
+                break
+            all_candles = candles + all_candles
+            if len(candles) < 100:
+                break
+            since = candles[0][0] - 1
+            if len(all_candles) >= limit:
+                break
+        except:
+            break
+    df = pd.DataFrame(all_candles[-limit:], columns=['t', 'o', 'h', 'l', 'c', 'v'])
     df['time'] = pd.to_datetime(df['t'], unit='ms')
     return df
 
