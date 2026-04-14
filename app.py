@@ -5,7 +5,6 @@ import plotly.graph_objects as go
 
 st.set_page_config(layout="wide", page_title="Crypto Screener")
 
-# Убираем отступы и промежутки между колонками
 st.markdown("""
 <style>
     .block-container { padding-top: 1rem; padding-bottom: 0rem; padding-left: 0rem; padding-right: 0rem; }
@@ -16,7 +15,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Инициализация биржи (OKX, Bybit, Bitget)
 @st.cache_resource
 def init_exchange():
     exchanges_to_try = [
@@ -30,12 +28,11 @@ def init_exchange():
             return exchange
         except Exception:
             continue
-    st.error("Не удалось подключиться к OKX, Bybit и Bitget. Попробуйте позже.")
+    st.error("Не удалось подключиться к OKX, Bybit и Bitget.")
     st.stop()
 
 exchange = init_exchange()
 
-# Получение списка торгуемых пар USDT
 @st.cache_data(ttl=300)
 def get_usdt_symbols():
     try:
@@ -50,34 +47,78 @@ def get_usdt_symbols():
     result = popular + [p for p in usdt_pairs if p not in popular][:35]
     return result
 
-# Получение OHLCV данных
-@st.cache_data(ttl=60)
-def fetch_ohlcv(symbol, timeframe='1h', limit=200):
+def fetch_ohlcv_raw(symbol, timeframe, limit, since=None):
+    """Загружает сырые данные с биржи"""
     try:
-        ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
-        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-        return df
+        if since:
+            ohlcv = exchange.fetch_ohlcv(symbol, timeframe, since=since, limit=limit)
+        else:
+            ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+        return ohlcv
     except Exception as e:
-        st.error(f"Ошибка загрузки данных: {e}")
-        return pd.DataFrame()
+        st.error(f"Ошибка загрузки: {e}")
+        return []
 
-# Сессия для хранения выбранной монеты и таймфрейма
+def ohlcv_to_df(ohlcv):
+    if not ohlcv:
+        return pd.DataFrame()
+    df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+    return df
+
+# Инициализация сессии
 if 'selected_symbol' not in st.session_state:
     st.session_state.selected_symbol = 'BTC/USDT'
 if 'selected_tf' not in st.session_state:
     st.session_state.selected_tf = '1h'
+if 'cached_df' not in st.session_state:
+    st.session_state.cached_df = pd.DataFrame()
+if 'last_symbol' not in st.session_state:
+    st.session_state.last_symbol = None
+if 'last_tf' not in st.session_state:
+    st.session_state.last_tf = None
+if 'load_more' not in st.session_state:
+    st.session_state.load_more = False
 
-# Загружаем список символов
+# Загружаем список монет
 symbols = get_usdt_symbols()
 if not symbols:
     st.stop()
 
-# Создаём две колонки: левая (график) – широкая, правая (список) – узкая
+# Проверяем, изменились ли монета или таймфрейм
+need_reload = (st.session_state.selected_symbol != st.session_state.last_symbol or
+               st.session_state.selected_tf != st.session_state.last_tf)
+
+if need_reload:
+    st.session_state.cached_df = pd.DataFrame()
+    st.session_state.last_symbol = st.session_state.selected_symbol
+    st.session_state.last_tf = st.session_state.selected_tf
+
+# Основная загрузка данных
+if st.session_state.cached_df.empty:
+    # Первая загрузка — 200 свечей
+    raw = fetch_ohlcv_raw(st.session_state.selected_symbol, st.session_state.selected_tf, limit=200)
+    st.session_state.cached_df = ohlcv_to_df(raw)
+else:
+    # Проверяем, нужно ли догрузить историю
+    if st.session_state.load_more and not st.session_state.cached_df.empty:
+        oldest_ts = st.session_state.cached_df['timestamp'].min()
+        # since должен быть в миллисекундах, берем самый старый timestamp минус 1 мс, чтобы не дублировать
+        since = int(oldest_ts.timestamp() * 1000) - 1
+        # Загружаем ещё 100 свечей до oldest_ts
+        older_raw = fetch_ohlcv_raw(st.session_state.selected_symbol, st.session_state.selected_tf,
+                                    limit=100, since=since)
+        older_df = ohlcv_to_df(older_raw)
+        if not older_df.empty:
+            # Объединяем и удаляем дубликаты по timestamp
+            combined = pd.concat([older_df, st.session_state.cached_df]).drop_duplicates('timestamp').sort_values('timestamp')
+            st.session_state.cached_df = combined
+        st.session_state.load_more = False
+
+# Интерфейс
 left_col, right_col = st.columns([5, 1], gap="small")
 
 with left_col:
-    # Заголовок с выбором таймфрейма
     col_title, col_tf = st.columns([3, 1])
     with col_title:
         st.header(f"{st.session_state.selected_symbol} – {st.session_state.selected_tf}", anchor=False)
@@ -93,8 +134,7 @@ with left_col:
             st.session_state.selected_tf = selected_tf
             st.rerun()
 
-    # Получаем данные
-    df = fetch_ohlcv(st.session_state.selected_symbol, timeframe=st.session_state.selected_tf, limit=200)
+    df = st.session_state.cached_df
 
     if not df.empty:
         fig = go.Figure(data=[go.Candlestick(
@@ -111,8 +151,8 @@ with left_col:
         fig.update_layout(
             height=700,
             margin=dict(l=10, r=10, t=30, b=10),
-            xaxis_rangeslider_visible=False,   # убираем нижний слайдер выделения
-            dragmode='pan',                    # перемещение графика мышкой
+            xaxis_rangeslider_visible=False,
+            dragmode='pan',
             template='plotly_dark',
             showlegend=False,
             xaxis=dict(showgrid=False),
@@ -121,22 +161,29 @@ with left_col:
             plot_bgcolor='#0e1117'
         )
 
-        # Включаем зум колёсиком, отключаем панель инструментов
-        st.plotly_chart(
+        # Получаем данные о текущем отображении из plotly events
+        chart_data = st.plotly_chart(
             fig,
             use_container_width=True,
-            config={
-                'scrollZoom': True,        # колёсико мыши меняет масштаб
-                'displayModeBar': False,    # скрываем панель инструментов
-                'doubleClick': 'reset'      # двойной клик сбрасывает масштаб
-            }
+            config={'scrollZoom': True, 'displayModeBar': False, 'doubleClick': 'reset'},
+            key="candlestick_chart"
         )
+
+        # Проверяем событие relayoutData
+        if chart_data and 'xaxis.range[0]' in chart_data:
+            left_bound = pd.to_datetime(chart_data['xaxis.range[0]'])
+            min_ts = df['timestamp'].min()
+            # Если пользователь приблизился к началу данных (разница меньше 10% от всего диапазона)
+            total_range = (df['timestamp'].max() - min_ts).total_seconds()
+            distance = (left_bound - min_ts).total_seconds()
+            if total_range > 0 and distance < total_range * 0.1:
+                st.session_state.load_more = True
+                st.rerun()
     else:
         st.warning("Нет данных для отображения")
 
 with right_col:
     st.markdown("**📋 Все монеты (USDT)**")
-
     search = st.text_input("🔍 Поиск", placeholder="BTC, ETH...", label_visibility="collapsed")
     filtered_symbols = symbols if not search else [s for s in symbols if search.upper() in s]
 
