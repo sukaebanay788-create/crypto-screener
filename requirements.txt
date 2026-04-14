@@ -2,3 +2,4 @@ streamlit
 pycoingecko
 pandas
 plotly
+python-binance
