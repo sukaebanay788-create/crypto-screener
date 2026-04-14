@@ -1,8 +1,6 @@
 import streamlit as st
 import ccxt
-import pandas as pd
 import time
-import json
 
 st.set_page_config(layout="wide", page_title="Screener", initial_sidebar_state="collapsed")
 
@@ -25,70 +23,6 @@ def get_exchange():
     return ex
 
 ex = get_exchange()
-
-def get_binance_ohlcv(symbol, timeframe, limit=1000):
-    """Binance REST API — 1000 candles per request"""
-    import requests
-    
-    tf_map = {'1m': '1m', '5m': '5m', '30m': '30m', '4h': '4h'}
-    interval = tf_map.get(timeframe, '1h')
-    pair = symbol.replace('/', '')
-    
-    all_candles = []
-    
-    for _ in range(10):
-        try:
-            url = 'https://api.binance.com/api/v3/klines'
-            params = {
-                'symbol': pair,
-                'interval': interval,
-                'limit': min(1000, limit - len(all_candles))
-            }
-            
-            if all_candles:
-                params['endTime'] = all_candles[0][0] - 1
-            
-            resp = requests.get(url, params=params, timeout=10)
-            if resp.status_code != 200:
-                break
-            
-            data = resp.json()
-            if not data:
-                break
-            
-            new_candles = []
-            for k in data:
-                new_candles.append([
-                    k[0], float(k[1]), float(k[2]), 
-                    float(k[3]), float(k[4]), float(k[5])
-                ])
-            
-            if all_candles:
-                new_candles = [c for c in new_candles if c[0] < all_candles[0][0]]
-            
-            if not new_candles:
-                break
-                
-            all_candles = new_candles + all_candles
-            time.sleep(0.05)
-            
-            if len(new_candles) < 1000:
-                break
-            if len(all_candles) >= limit:
-                break
-                
-        except Exception as e:
-            if not all_candles:
-                return []
-            break
-    
-    return all_candles
-
-@st.cache_data(ttl=120)
-def get_symbols():
-    markets = ex.load_markets()
-    return [s for s in markets if s.endswith('/USDT') and markets[s]['active']
-            and markets[s].get('spot', True)]
 
 @st.cache_data(ttl=30)
 def get_screener_data():
@@ -116,7 +50,6 @@ def get_screener_data():
             if not sym.endswith('USDT'):
                 sym = sym + '/USDT'
             
-            # Проверяем что символ есть на бирже
             if sym not in ex.markets:
                 continue
             
@@ -132,40 +65,6 @@ def get_screener_data():
     except:
         return []
 
-def get_chart_data(symbol, timeframe, limit=1000):
-    """Binance first, fallback to OKX"""
-    try:
-        candles = get_binance_ohlcv(symbol, timeframe, limit)
-        if candles:
-            return candles
-    except:
-        pass
-    
-    # Fallback to OKX with pagination
-    tf_ms = {'1m':60000,'5m':300000,'30m':1800000,'4h':14400000}
-    candle_ms = tf_ms.get(timeframe, 3600000)
-    
-    candles = ex.fetch_ohlcv(symbol, timeframe, limit=100)
-    if not candles:
-        return []
-    
-    all_candles = candles[:]
-    for _ in range(9):
-        time.sleep(0.1)
-        oldest_ts = all_candles[0][0]
-        since = oldest_ts - (100 * candle_ms)
-        older = ex.fetch_ohlcv(symbol, timeframe, limit=100, since=since)
-        if not older:
-            break
-        older = [c for c in older if c[0] < oldest_ts]
-        if not older:
-            break
-        all_candles = older + all_candles
-        if len(all_candles) >= limit:
-            break
-    
-    return all_candles
-
 # ── State ──
 if 'coin' not in st.session_state:
     st.session_state.coin = 'BTC/USDT'
@@ -175,12 +74,7 @@ if 'sort' not in st.session_state:
     st.session_state.sort = '24h'
 if 'search' not in st.session_state:
     st.session_state.search = ''
-if 'last_fetch' not in st.session_state:
-    st.session_state.last_fetch = 0
-if 'chart_limit' not in st.session_state:
-    st.session_state.chart_limit = 1000
 
-symbols = get_symbols()
 screen_data = get_screener_data()
 
 # ── Layout ──
@@ -203,105 +97,41 @@ with chart_area:
                 st.session_state.tf = tf
                 st.rerun()
 
-    # TradingView Chart via HTML component
+    # TradingView Widget — данные загружаются автоматически
     chart_container = st.container()
     with chart_container:
-        try:
-            candles = get_chart_data(st.session_state.coin, st.session_state.tf, 
-                                     limit=st.session_state.chart_limit)
-
-            if candles:
-                df = pd.DataFrame(candles, columns=['t','o','h','l','c','v'])
-                current = df.iloc[-1]['c']
-                prev = df.iloc[-2]['c'] if len(df) > 1 else current
-                chg = ((current - prev) / prev) * 100
-                color = "#00d084" if chg >= 0 else "#ff4757"
-
-                # Prepare data for TradingView
-                tv_data = []
-                for _, row in df.iterrows():
-                    tv_data.append({
-                        'time': int(row['t'] / 1000),
-                        'open': float(row['o']),
-                        'high': float(row['h']),
-                        'low': float(row['l']),
-                        'close': float(row['c']),
-                    })
-
-                tv_json = json.dumps(tv_data)
-
-                st.components.v1.html(f"""
-                <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
-                <div id="chart" style="width:100%;height:720px;background:#0a0a0a;"></div>
-                <script>
-                const chart = LightweightCharts.createChart(document.getElementById('chart'), {{
-                    width: document.getElementById('chart').clientWidth,
-                    height: 720,
-                    layout: {{
-                        background: {{type: 'solid', color: '#0a0a0a'}},
-                        textColor: '#888',
-                    }},
-                    grid: {{
-                        vertLines: {{color: '#1a1a1a'}},
-                        horzLines: {{color: '#1a1a1a'}},
-                    }},
-                    crosshair: {{
-                        mode: LightweightCharts.CrosshairMode.Normal,
-                    }},
-                    rightPriceScale: {{
-                        borderColor: '#1a1a1a',
-                    }},
-                    timeScale: {{
-                        borderColor: '#1a1a1a',
-                        timeVisible: true,
-                        secondsVisible: false,
-                    }},
-                    handleScroll: {{
-                        mouseWheel: true,
-                        pressedMouseMove: true,
-                    }},
-                    handleScale: {{
-                        axisPressedMouseMove: true,
-                        mouseWheel: true,
-                        pinch: true,
-                    }},
-                }});
-
-                const candlestickSeries = chart.addCandlestickSeries({{
-                    upColor: '#00d084',
-                    downColor: '#ff4757',
-                    borderUpColor: '#00d084',
-                    borderDownColor: '#ff4757',
-                    wickUpColor: '#00d084',
-                    wickDownColor: '#ff4757',
-                }});
-
-                candlestickSeries.setData({tv_data});
-
-                chart.timeScale().fitContent();
-
-                window.addEventListener('resize', () => {{
-                    chart.applyOptions({{ width: document.getElementById('chart').clientWidth }});
-                }});
-                </script>
-                """, height=720)
-
-                # Price + load more button
-                col_price, col_load = st.columns([1, 3])
-                with col_price:
-                    st.markdown(
-                        f"`{current:.6f}`  "
-                        f"<span style='color:{color};font-weight:bold;font-size:18px'>{chg:+.2f}%</span>",
-                        unsafe_allow_html=True
-                    )
-                with col_load:
-                    if st.button("⬇ Load more history"):
-                        st.session_state.chart_limit = min(st.session_state.chart_limit + 1000, 5000)
-                        st.rerun()
-                    
-                    st.caption(f"Loaded: {len(candles)} candles")
-        except Exception as e:
-            st.warning(str(e))
+        tv_symbol = st.session_state.coin.replace('/', '')
+        tv_tf_map = {'1m': '1', '5m': '5', '30m': '30', '4h': '240'}
+        tv_interval = tv_tf_map.get(st.session_state.tf, '60')
+        
+        st.components.v1.html(f"""
+        <div class="tradingview-widget-container" style="width:100%;height:720px;">
+          <div id="tradingview_chart" style="width:100%;height:100%;"></div>
+          <script src="https://s3.tradingview.com/tv.js"></script>
+          <script>
+            new TradingView.widget({{
+              "width": "100%",
+              "height": "100%",
+              "symbol": "BINANCE:{tv_symbol}",
+              "interval": "{tv_interval}",
+              "timezone": "Etc/UTC",
+              "theme": "dark",
+              "style": "1",
+              "locale": "en",
+              "toolbar_bg": "#0a0a0a",
+              "enable_publishing": false,
+              "hide_side_toolbar": false,
+              "allow_symbol_change": true,
+              "container_id": "tradingview_chart",
+              "studies": [],
+              "save_image": false,
+              "details": false,
+              "hotlist": false,
+              "calendar": false,
+            }});
+          </script>
+        </div>
+        """, height=720)
 
 # ── SIDEBAR ──
 with sidebar:
@@ -323,8 +153,8 @@ with sidebar:
             st.session_state.sort = '24h'
             st.rerun()
     
-    search_val = st.text_input("", key="search_input", label_visibility="collapsed",
-                               placeholder="BTC...")
+    search_val = st.text_input("Search", key="search_input", 
+                               placeholder="BTC...", label_visibility="collapsed")
     
     screen_data.sort(key=lambda x: x[st.session_state.sort] or 0, reverse=True)
     
