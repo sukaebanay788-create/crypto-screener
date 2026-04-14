@@ -46,36 +46,47 @@ def get_symbols():
     return [s for s in markets if s.endswith('/USDT') and markets[s]['active']
             and markets[s].get('spot', True)]
 
-@st.cache_data(ttl=20)
-def get_screener_data(symbols):
-    data = []
+@st.cache_data(ttl=30)
+def get_screener_data():
+    """CoinGecko — все монеты за ОДИН запрос, супер быстро!"""
+    import requests
     try:
-        for i in range(0, min(len(symbols), 80), 50):
-            chunk = symbols[i:i+50]
-            tickers = ex.fetch_tickers(chunk)
-            for sym in chunk:
-                ticker = tickers.get(sym, {})
-                price = ticker.get('last', 0) or 0
-                change24 = ticker.get('percentage', 0) or 0
-                
-                change5 = 0
-                change15 = 0
-                try:
-                    c5 = ex.fetch_ohlcv(sym, '5m', limit=3)
-                    if len(c5) >= 2:
-                        change5 = ((c5[-1][4] - c5[0][4]) / c5[0][4]) * 100
-                except: pass
-                    
-                try:
-                    c15 = ex.fetch_ohlcv(sym, '15m', limit=3)
-                    if len(c15) >= 2:
-                        change15 = ((c15[-1][4] - c15[0][4]) / c15[0][4]) * 100
-                except: pass
-                
-                data.append({'symbol': sym, 'price': price, 'change24': change24,
-                            'change5': change5, 'change15': change15})
-    except: pass
-    return data
+        resp = requests.get(
+            'https://api.coingecko.com/api/v3/coins/markets',
+            params={
+                'vs_currency': 'usd',
+                'category': 'layer-1',
+                'order': 'volume_desc',
+                'per_page': 50,
+                'price_change_percentage': '5m,15m,24h'
+            },
+            timeout=10
+        )
+        if resp.status_code != 200:
+            return []
+        
+        data = resp.json()
+        result = []
+        for coin in data:
+            sym = coin['symbol'].upper()
+            if not sym.endswith('USDT'):
+                sym = sym + '/USDT'
+            
+            # Проверяем что символ есть на бирже
+            if sym not in ex.markets:
+                continue
+            
+            result.append({
+                'symbol': sym,
+                'price': coin.get('current_price', 0) or 0,
+                '24h': coin.get('price_change_percentage_24h', 0) or 0,
+                '5m': coin.get('price_change_percentage_5m', 0) or 0,
+                '15m': coin.get('price_change_percentage_15m', 0) or 0,
+                'volume': coin.get('total_volume', 0) or 0
+            })
+        return result
+    except:
+        return []
 
 def get_chart_data(symbol, timeframe):
     limit = 1000
@@ -90,14 +101,14 @@ if 'coin' not in st.session_state:
 if 'tf' not in st.session_state:
     st.session_state.tf = '1h'
 if 'sort' not in st.session_state:
-    st.session_state.sort = 'change5'
+    st.session_state.sort = '24h'
 if 'search' not in st.session_state:
     st.session_state.search = ''
 if 'last_fetch' not in st.session_state:
     st.session_state.last_fetch = 0
 
 symbols = get_symbols()
-screen_data = get_screener_data(symbols)
+screen_data = get_screener_data()
 
 # ── Layout ──
 chart_area, sidebar = st.columns([5, 1])
@@ -219,44 +230,39 @@ with chart_area:
 
 # ── SIDEBAR ──
 with sidebar:
+    # Sort buttons
     s1, s2, s3 = st.columns(3)
     with s1:
-        if st.button("5m", type="primary" if st.session_state.sort == 'change5' else "secondary",
+        if st.button("5m", type="primary" if st.session_state.sort == '5m' else "secondary",
                     use_container_width=True):
-            st.session_state.sort = 'change5'
+            st.session_state.sort = '5m'
             st.rerun()
     with s2:
-        if st.button("15m", type="primary" if st.session_state.sort == 'change15' else "secondary",
+        if st.button("15m", type="primary" if st.session_state.sort == '15m' else "secondary",
                     use_container_width=True):
-            st.session_state.sort = 'change15'
+            st.session_state.sort = '15m'
             st.rerun()
     with s3:
-        if st.button("24h", type="primary" if st.session_state.sort == 'change24' else "secondary",
+        if st.button("24h", type="primary" if st.session_state.sort == '24h' else "secondary",
                     use_container_width=True):
-            st.session_state.sort = 'change24'
+            st.session_state.sort = '24h'
             st.rerun()
     
     search_val = st.text_input("", key="search_input", label_visibility="collapsed",
                                placeholder="BTC...")
     
-    screen_data.sort(key=lambda x: x[st.session_state.sort], reverse=True)
+    screen_data.sort(key=lambda x: x[st.session_state.sort] or 0, reverse=True)
     
     filtered = screen_data
     if search_val:
         s = search_val.upper()
         filtered = [x for x in screen_data if s in x['symbol'].replace('/USDT', '')]
     
-    with st.container(height=550):
+    with st.container(height=600):
         for item in filtered[:40]:
             sym = item['symbol']
             name = sym.replace('/USDT', '')
-            
-            if st.session_state.sort == 'change5':
-                chg = item['change5']
-            elif st.session_state.sort == 'change15':
-                chg = item['change15']
-            else:
-                chg = item['change24']
+            chg = item[st.session_state.sort] or 0
             
             active = "primary" if sym == st.session_state.coin else "secondary"
             sign = "+" if chg >= 0 else ""
