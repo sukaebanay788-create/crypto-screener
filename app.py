@@ -9,8 +9,9 @@ st.set_page_config(layout="wide")
 
 # ------------------ ИНИЦИАЛИЗАЦИЯ API ------------------
 cg = CoinGeckoAPI()
-# Используем альтернативный публичный API Binance
-binance_client = Client(tld="us")
+# Используем публичный API Binance через data.binance.com
+binance_client = Client(tld=None)
+binance_client.API_URL = "https://data-api.binance.vision/api/v3"
 
 # ------------------ ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ------------------
 @st.cache_data(ttl=60)
