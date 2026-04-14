@@ -10,6 +10,9 @@ st.set_page_config(layout="wide", page_title="Крипто-скринер")
 # ------------------ ИНИЦИАЛИЗАЦИЯ API ------------------
 cg = CoinGeckoAPI()
 
+# Публичный эндпоинт Bybit (работает без ключей)
+BYBIT_API_URL = "https://api.bybit.com/v5/market/kline"
+
 # ------------------ ФУНКЦИИ ------------------
 @st.cache_data(ttl=60)
 def load_coins_list():
@@ -25,40 +28,46 @@ def load_coins_list():
         return pd.DataFrame(columns=['id', 'symbol', 'name', 'current_price', 'price_change_percentage_24h'])
 
 @st.cache_data(ttl=300)
-def load_binance_klines(symbol, interval, limit=1000):
-    """Загружает свечи напрямую с Binance API (без сторонних библиотек)"""
-    url = "https://data-api.binance.vision/api/v3"
-    params = {
-        "symbol": symbol,
-        "interval": interval,
-        "limit": limit
-    }
+def load_bybit_klines(symbol, interval, limit=1000):
+    """Загружает свечи через прямой запрос к Bybit API (публичный, без ключей)"""
     try:
-        resp = requests.get(url, params=params, timeout=15)
-        resp.raise_for_status()
-        klines = resp.json()
-        df = pd.DataFrame(klines, columns=[
-            'timestamp', 'open', 'high', 'low', 'close', 'volume',
-            'close_time', 'quote_asset_volume', 'number_of_trades',
-            'taker_buy_base_volume', 'taker_buy_quote_volume', 'ignore'
-        ])
-        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+        params = {
+            "category": "spot",  # спотовый рынок
+            "symbol": symbol,
+            "interval": interval,
+            "limit": limit
+        }
+        response = requests.get(BYBIT_API_URL, params=params, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+
+        if data['retCode'] != 0:
+            st.error(f"Ошибка API Bybit: {data['retMsg']}")
+            return pd.DataFrame()
+
+        klines = data['result']['list']
+        # Bybit возвращает свечи в обратном порядке (новые первыми)
+        klines.reverse()
+
+        df = pd.DataFrame(klines, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume', 'turnover'])
+        df['timestamp'] = pd.to_datetime(df['timestamp'].astype(float), unit='ms')
         for col in ['open', 'high', 'low', 'close']:
             df[col] = df[col].astype(float)
         return df
     except Exception as e:
-        st.error(f"Ошибка загрузки данных Binance: {e}")
+        st.error(f"Ошибка загрузки данных Bybit: {e}")
         return pd.DataFrame()
 
 # ------------------ ЗАГРУЗКА СПИСКА МОНЕТ ------------------
 df_coins = load_coins_list()
 
-# ------------------ ИНТЕРФЕЙС ------------------
+# ------------------ ИНТЕРФЕЙС: ДВЕ КОЛОНКИ ------------------
 col_chart, col_list = st.columns([5, 1.2])
 
-# Правая колонка
+# ------------------ ПРАВАЯ КОЛОНКА (СПИСОК) ------------------
 with col_list:
     st.markdown("### 🔥 Рост за 24ч")
+
     if df_coins.empty:
         st.warning("Нет данных")
     else:
@@ -66,54 +75,104 @@ with col_list:
             df_coins[['symbol', 'price_change_percentage_24h']],
             column_config={
                 "symbol": "Монета",
-                "price_change_percentage_24h": st.column_config.NumberColumn("Рост %", format="%.2f %%")
+                "price_change_percentage_24h": st.column_config.NumberColumn(
+                    "Рост %",
+                    format="%.2f %%"
+                )
             },
             hide_index=True,
             use_container_width=True,
             on_select="rerun",
             selection_mode="single-row"
         )
+
         selected_symbol = 'BTC'
         if event.selection.rows:
             idx = event.selection.rows[0]
             selected_symbol = df_coins.iloc[idx]['symbol'].upper()
 
-# Левая колонка (график)
+# ------------------ ЛЕВАЯ КОЛОНКА (ГРАФИК) ------------------
 with col_chart:
     header_col1, header_col2 = st.columns([3, 1])
     with header_col1:
         st.markdown(f"### {selected_symbol}/USDT")
     with header_col2:
-        timeframe = st.selectbox("Таймфрейм", ['1m', '5m', '30m', '1h', '4h'], index=1)
+        timeframe = st.selectbox(
+            "Таймфрейм",
+            options=['1', '5', '30', '60', '240'],  # Bybit использует минуты
+            format_func=lambda x: f"{x} мин" if int(x) < 60 else f"{int(x)//60} ч",
+            index=1  # 5 мин по умолчанию
+        )
 
-    binance_symbol = f"{selected_symbol}USDT"
-    df = load_binance_klines(binance_symbol, interval=timeframe, limit=1000)
+    bybit_symbol = f"{selected_symbol}USDT"
+    df = load_bybit_klines(bybit_symbol, interval=timeframe, limit=1000)
 
     if not df.empty:
         fig = go.Figure()
+
         fig.add_trace(go.Candlestick(
-            x=df['timestamp'], open=df['open'], high=df['high'],
-            low=df['low'], close=df['close'], name='Цена',
-            increasing_line_color='#26a69a', decreasing_line_color='#ef5350'
+            x=df['timestamp'],
+            open=df['open'],
+            high=df['high'],
+            low=df['low'],
+            close=df['close'],
+            name='Цена',
+            increasing_line_color='#26a69a',
+            decreasing_line_color='#ef5350',
+            showlegend=True
         ))
+
         df['EMA_65'] = df['close'].ewm(span=65, adjust=False).mean()
+        fig.add_trace(go.Scatter(
+            x=df['timestamp'], y=df['EMA_65'],
+            name='EMA 65',
+            line=dict(color='#FFA500', width=1.5)
+        ))
+
         df['EMA_125'] = df['close'].ewm(span=125, adjust=False).mean()
+        fig.add_trace(go.Scatter(
+            x=df['timestamp'], y=df['EMA_125'],
+            name='EMA 125',
+            line=dict(color='#1E90FF', width=1.5)
+        ))
+
         df['EMA_450'] = df['close'].ewm(span=450, adjust=False).mean()
-        fig.add_trace(go.Scatter(x=df['timestamp'], y=df['EMA_65'], name='EMA 65', line=dict(color='#FFA500', width=1.5)))
-        fig.add_trace(go.Scatter(x=df['timestamp'], y=df['EMA_125'], name='EMA 125', line=dict(color='#1E90FF', width=1.5)))
-        fig.add_trace(go.Scatter(x=df['timestamp'], y=df['EMA_450'], name='EMA 450', line=dict(color='#FF69B4', width=1.5)))
+        fig.add_trace(go.Scatter(
+            x=df['timestamp'], y=df['EMA_450'],
+            name='EMA 450',
+            line=dict(color='#FF69B4', width=1.5)
+        ))
 
         fig.update_layout(
-            template="plotly_dark", height=800, margin=dict(l=20, r=20, t=40, b=20),
+            template="plotly_dark",
+            height=800,
+            margin=dict(l=20, r=20, t=40, b=20),
             hovermode='x unified',
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="left",
+                x=0
+            ),
             xaxis_rangeslider_visible=False,
-            xaxis=dict(type='category', showgrid=True, gridcolor='rgba(128,128,128,0.2)'),
-            yaxis=dict(showgrid=True, gridcolor='rgba(128,128,128,0.2)', side='right'),
-            plot_bgcolor='#0e1117', paper_bgcolor='#0e1117'
+            xaxis=dict(
+                type='category',
+                showgrid=True,
+                gridcolor='rgba(128,128,128,0.2)'
+            ),
+            yaxis=dict(
+                showgrid=True,
+                gridcolor='rgba(128,128,128,0.2)',
+                side='right'
+            ),
+            plot_bgcolor='#0e1117',
+            paper_bgcolor='#0e1117'
         )
+
         fig.update_xaxes(showline=True, linewidth=1, linecolor='gray', mirror=True)
         fig.update_yaxes(showline=True, linewidth=1, linecolor='gray', mirror=True)
+
         st.plotly_chart(fig, use_container_width=True)
     else:
-        st.warning("Не удалось загрузить график.")
+        st.warning("Не удалось загрузить график. Попробуйте другую монету.")
