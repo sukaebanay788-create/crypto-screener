@@ -15,25 +15,20 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-    /* Убираем стандартные отступы Streamlit */
     .main .block-container {
         padding: 1rem 2rem 1rem 2rem;
         max-width: 100%;
     }
-    /* Убираем стандартный футер и хедер */
     footer {visibility: hidden;}
     header {visibility: hidden;}
-    /* Стиль для заголовков */
     h1, h2, h3 {
         font-family: 'Segoe UI', 'Roboto', sans-serif;
         font-weight: 300;
         letter-spacing: -0.01em;
     }
-    /* Делаем таблицу более воздушной */
     .stDataFrame {
         font-family: 'Segoe UI', 'Roboto', sans-serif;
     }
-    /* Стиль для метрик */
     .metric-card {
         background-color: #ffffff;
         border-radius: 12px;
@@ -104,7 +99,6 @@ def load_okx_klines(instId, bar="5m", limit=300):
 df_coins = load_coins_list()
 
 # ------------------ ИНТЕРФЕЙС ------------------
-# Используем больше воздуха между колонками
 col_chart, col_spacer, col_list = st.columns([6, 0.1, 1.2])
 
 # ------------------ ПРАВАЯ КОЛОНКА (СПИСОК) ------------------
@@ -131,7 +125,6 @@ with col_list:
 
 # ------------------ ЛЕВАЯ КОЛОНКА (ГРАФИК) ------------------
 with col_chart:
-    # Заголовок и выбор таймфрейма в одной строке
     c1, c2, c3 = st.columns([3, 2, 1])
     with c1:
         st.markdown(f"## {selected_symbol}/USDT")
@@ -153,7 +146,7 @@ with col_chart:
             name='Цена',
             increasing_line_color='#26a69a',
             decreasing_line_color='#ef5350',
-            showlegend=False  # Легенду не показываем, т.к. все подписано в названиях линий
+            showlegend=False
         ))
 
         df['EMA_65'] = df['close'].ewm(span=65, adjust=False).mean()
@@ -182,7 +175,7 @@ with col_chart:
         config = {'displayModeBar': False, 'scrollZoom': True, 'displaylogo': False}
         st.plotly_chart(fig, use_container_width=True, config=config)
 
-        # Метрики в стиле "Clean & Airy"
+        # Метрики
         current_price = df['close'].iloc[-1]
         prev_price = df['close'].iloc[-2] if len(df) > 1 else current_price
         change = current_price - prev_price
@@ -211,7 +204,5 @@ with col_chart:
                 <div class="metric-value">${df['low'].min():,.2f}</div>
             </div>
             """, unsafe_allow_html=True)
-    else:
-        st.warning("Не удалось загрузить график.")
     else:
         st.warning("Не удалось загрузить график.")
