@@ -114,28 +114,32 @@ with col_chart:
             name='Цена',
             increasing_line_color='#26a69a',
             decreasing_line_color='#ef5350',
-            showlegend=True
+            showlegend=True,
+            hoverinfo='none'      # отключаем всплывающую подсказку для свечей
         ))
 
         df['EMA_65'] = df['close'].ewm(span=65, adjust=False).mean()
         fig.add_trace(go.Scatter(
             x=df['timestamp'], y=df['EMA_65'],
             name='EMA 65',
-            line=dict(color='#FFA500', width=1.5)
+            line=dict(color='#FFA500', width=1.5),
+            hoverinfo='none'
         ))
 
         df['EMA_125'] = df['close'].ewm(span=125, adjust=False).mean()
         fig.add_trace(go.Scatter(
             x=df['timestamp'], y=df['EMA_125'],
             name='EMA 125',
-            line=dict(color='#1E90FF', width=1.5)
+            line=dict(color='#1E90FF', width=1.5),
+            hoverinfo='none'
         ))
 
         df['EMA_450'] = df['close'].ewm(span=450, adjust=False).mean()
         fig.add_trace(go.Scatter(
             x=df['timestamp'], y=df['EMA_450'],
             name='EMA 450',
-            line=dict(color='#FF69B4', width=1.5)
+            line=dict(color='#FF69B4', width=1.5),
+            hoverinfo='none'
         ))
 
         # Настройки графика
@@ -143,7 +147,7 @@ with col_chart:
             template="plotly_dark",
             height=800,
             margin=dict(l=20, r=20, t=40, b=20),
-            hovermode='x unified',
+            hovermode=False,          # полностью отключаем hover
             legend=dict(
                 orientation="h",
                 yanchor="bottom",
@@ -151,26 +155,28 @@ with col_chart:
                 xanchor="left",
                 x=0
             ),
-            xaxis_rangeslider_visible=False,
+            xaxis_rangeslider_visible=True,   # ползунок внизу для масштабирования по X
             xaxis=dict(
                 type='category',
                 showgrid=True,
-                gridcolor='rgba(128,128,128,0.2)'
+                gridcolor='rgba(128,128,128,0.2)',
+                rangeslider=dict(visible=True, thickness=0.05)  # тонкий ползунок
             ),
             yaxis=dict(
                 showgrid=True,
                 gridcolor='rgba(128,128,128,0.2)',
-                side='right'
+                side='right',
+                fixedrange=False      # разрешаем зум по Y (колёсиком)
             ),
             plot_bgcolor='#0e1117',
             paper_bgcolor='#0e1117',
-            dragmode='pan'
+            dragmode='pan'            # перемещение перетаскиванием
         )
 
         fig.update_xaxes(showline=True, linewidth=1, linecolor='gray', mirror=True)
         fig.update_yaxes(showline=True, linewidth=1, linecolor='gray', mirror=True)
 
-        # Конфигурация отображения
+        # Конфигурация отображения (панель скрыта)
         config = {
             'displayModeBar': False,
             'scrollZoom': True,
