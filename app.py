@@ -2,317 +2,303 @@ import streamlit as st
 import ccxt
 import pandas as pd
 import plotly.graph_objects as go
+import time
 
-st.set_page_config(layout="wide", page_title="Crypto Screener")
+st.set_page_config(layout="wide", page_title="Screener", initial_sidebar_state="collapsed")
 
 st.markdown("""
 <style>
-    .block-container { padding-top: 0.5rem; padding-bottom: 0rem; padding-left: 0rem; padding-right: 0rem; }
+    .block-container { 
+        padding: 0.5rem 1rem; 
+        max-width: 100%;
+    }
+    .stPlotlyChart { margin: 0; padding: 0; }
+    div[data-testid="stHorizontalBlock"] { gap: 0.5rem !important; }
     div[data-testid="column"] { padding: 0px !important; }
-    .stPlotlyChart { margin: 0px; padding: 0px; }
-    .coin-row { display: flex; align-items: center; padding: 6px 8px; cursor: pointer; border-bottom: 1px solid #1a1a2e; }
-    .coin-row:hover { background-color: #1e2a3a; }
-    .stButton>button { padding: 0.25rem 0.5rem; font-size: 12px; }
-    div[data-testid="stVerticalBlock"] > div { margin: 0 !important; padding: 0 !important; }
-    .sort-header { font-size: 11px; color: #888; padding: 4px 8px; cursor: pointer; user-select: none; }
-    .sort-header:hover { color: #fff; }
-    .sort-header.active { color: #26a69a; font-weight: bold; }
+    .element-container { margin-bottom: 0px !important; }
+    button[kind="secondary"], button[kind="primary"] { 
+        border-radius: 4px; 
+        font-size: 13px;
+        padding: 4px 8px;
+        margin: 2px 0;
+    }
+    .css-1v0mbdj { border: none !important; }
     #MainMenu {visibility: hidden;}
     header {visibility: hidden;}
     footer {visibility: hidden;}
+    .coin-row { 
+        display: flex; 
+        justify-content: space-between; 
+        padding: 6px 8px;
+        cursor: pointer;
+        border-bottom: 1px solid #1a1a1a;
+        transition: background 0.1s;
+    }
+    .coin-row:hover { background: #1a2332; }
+    .up { color: #00d084; }
+    .down { color: #ff4757; }
 </style>
 """, unsafe_allow_html=True)
 
 @st.cache_resource
-def init_exchange():
-    exchanges_to_try = [
-        ccxt.okx({'enableRateLimit': True}),
-        ccxt.bybit({'enableRateLimit': True}),
-        ccxt.bitget({'enableRateLimit': True})
-    ]
-    for exchange in exchanges_to_try:
-        try:
-            exchange.load_markets()
-            return exchange
-        except Exception:
-            continue
-    st.error("Не удалось подключиться к OKX, Bybit и Bitget.")
-    st.stop()
+def get_exchange():
+    ex = ccxt.okx({
+        'enableRateLimit': True,
+        'options': {'defaultType': 'spot'}
+    })
+    ex.load_markets()
+    return ex
 
-exchange = init_exchange()
-
-@st.cache_data(ttl=300)
-def get_usdt_symbols():
-    try:
-        markets = exchange.load_markets()
-    except Exception as e:
-        st.error(f"Ошибка загрузки рынков: {e}")
-        return []
-    usdt_pairs = [symbol for symbol in markets if symbol.endswith('/USDT')]
-    popular = ['BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'SOL/USDT', 'XRP/USDT',
-               'ADA/USDT', 'DOGE/USDT', 'MATIC/USDT', 'DOT/USDT', 'LTC/USDT',
-               'AVAX/USDT', 'LINK/USDT', 'UNI/USDT', 'ATOM/USDT', 'ETC/USDT']
-    result = popular + [p for p in usdt_pairs if p not in popular][:85]
-    return result
+ex = get_exchange()
 
 @st.cache_data(ttl=60)
-def fetch_tickers_for_symbols(symbols_list):
+def get_markets():
+    markets = ex.load_markets()
+    symbols = [s for s in markets.keys() 
+               if s.endswith('/USDT') 
+               and markets[s]['active']
+               and not markets[s].get('spot', True) == False]
+    return symbols
+
+def get_price_change(symbol, timeframe, minutes):
+    """Calculate price change % over last N minutes"""
     try:
-        all_tickers = {}
-        chunk_size = 20
-        for i in range(0, len(symbols_list), chunk_size):
-            chunk = symbols_list[i:i+chunk_size]
-            for sym in chunk:
-                try:
-                    ticker = exchange.fetch_ticker(sym)
-                    all_tickers[sym] = ticker
-                except Exception:
-                    continue
-        return all_tickers
-    except Exception:
-        return {}
+        candles = ex.fetch_ohlcv(symbol, timeframe, limit=100)
+        if not candles:
+            return 0
+        df = pd.DataFrame(candles, columns=['t', 'o', 'h', 'l', 'c', 'v'])
+        now = df.iloc[-1]['t']
+        target = now - (minutes * 60 * 1000)
+        before = df[df['t'] <= target]
+        if before.empty:
+            return 0
+        old = before.iloc[-1]['c']
+        new = df.iloc[-1]['c']
+        return ((new - old) / old) * 100
+    except:
+        return 0
 
-def fetch_ohlcv_raw(symbol, timeframe, limit, since=None):
+@st.cache_data(ttl=30)
+def fetch_all_changes(symbols, timeframe='1h'):
+    """Get 24h change + short-term changes"""
+    data = []
+    tickers = ex.fetch_tickers(symbols[:50])
+    
+    for sym in symbols[:50]:
+        try:
+            ticker = tickers.get(sym, {})
+            change24 = ticker.get('percentage', 0) or 0
+            price = ticker.get('last', 0) or 0
+            vol = ticker.get('quoteVolume', 0) or 0
+            
+            # Calculate 5m and 15m changes
+            try:
+                candles5 = ex.fetch_ohlcv(sym, '5m', limit=20)
+                change5 = 0
+                if len(candles5) >= 2:
+                    old5 = candles5[0][4]
+                    new5 = candles5[-1][4]
+                    change5 = ((new5 - old5) / old5) * 100
+            except:
+                change5 = 0
+                
+            try:
+                candles15 = ex.fetch_ohlcv(sym, '15m', limit=20)
+                change15 = 0
+                if len(candles15) >= 2:
+                    old15 = candles15[0][4]
+                    new15 = candles15[-1][4]
+                    change15 = ((new15 - old15) / old15) * 100
+            except:
+                change15 = 0
+            
+            data.append({
+                'symbol': sym,
+                'price': price,
+                'change24': change24,
+                'change5': change5,
+                'change15': change15,
+                'volume': vol
+            })
+        except:
+            continue
+    
+    return data
+
+# State
+if 'coin' not in st.session_state:
+    st.session_state.coin = 'BTC/USDT'
+if 'tf' not in st.session_state:
+    st.session_state.tf = '1h'
+if 'sort' not in st.session_state:
+    st.session_state.sort = 'change5'
+if 'search' not in st.session_state:
+    st.session_state.search = ''
+
+symbols = get_markets()
+
+# Fetch screener data
+screen_data = fetch_all_changes(symbols)
+
+# Sort
+reverse = True
+if screen_data:
+    screen_data.sort(key=lambda x: x[st.session_state.sort], reverse=reverse)
+
+# Filter
+filtered = screen_data
+if st.session_state.search:
+    s = st.session_state.search.upper()
+    filtered = [x for x in screen_data if s in x['symbol'].replace('/USDT', '')]
+
+# Main layout - chart takes most space
+chart_area, sidebar = st.columns([5, 1])
+
+with chart_area:
+    # Top bar
+    bar1, bar2, bar3 = st.columns([1, 2, 1])
+    
+    with bar1:
+        st.markdown(f"## {st.session_state.coin.replace('/USDT', '')}")
+    
+    with bar2:
+        # Timeframe selector
+        tfs = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '12h', '1d']
+        cols = st.columns(len(tfs))
+        for i, tf in enumerate(tfs):
+            with cols[i]:
+                active = tf == st.session_state.tf
+                if st.button(tf, key=f"tf_{tf}", 
+                            type="primary" if active else "secondary",
+                            use_container_width=True):
+                    st.session_state.tf = tf
+                    st.rerun()
+    
+    with bar3:
+        pass
+    
+    # Chart
     try:
-        if since:
-            ohlcv = exchange.fetch_ohlcv(symbol, timeframe, since=since, limit=limit)
-        else:
-            ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
-        return ohlcv
-    except Exception as e:
-        st.error(f"Ошибка загрузки: {e}")
-        return []
-
-def ohlcv_to_df(ohlcv):
-    if not ohlcv:
-        return pd.DataFrame()
-    df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-    return df
-
-def calc_change_from_ohlcv(df, minutes):
-    if df.empty or len(df) < 2:
-        return 0.0
-    target_ms = minutes * 60 * 1000
-    now_ts = df['timestamp'].max()
-    target_ts = now_ts - pd.Timedelta(milliseconds=target_ms)
-    closest = df[df['timestamp'] <= target_ts]
-    if closest.empty:
-        oldest = df.iloc[0]
-        newest = df.iloc[-1]
-        return ((newest['close'] - oldest['close']) / oldest['close']) * 100
-    old_price = closest.iloc[-1]['close']
-    new_price = df.iloc[-1]['close']
-    return ((new_price - old_price) / old_price) * 100
-
-# Сессия
-if 'selected_symbol' not in st.session_state:
-    st.session_state.selected_symbol = 'BTC/USDT'
-if 'selected_tf' not in st.session_state:
-    st.session_state.selected_tf = '1h'
-if 'cached_df' not in st.session_state:
-    st.session_state.cached_df = pd.DataFrame()
-if 'last_symbol' not in st.session_state:
-    st.session_state.last_symbol = None
-if 'last_tf' not in st.session_state:
-    st.session_state.last_tf = None
-if 'sort_by' not in st.session_state:
-    st.session_state.sort_by = '24h'
-if 'ticker_data' not in st.session_state:
-    st.session_state.ticker_data = {}
-if 'last_ticker_update' not in st.session_state:
-    st.session_state.last_ticker_update = 0
-
-symbols = get_usdt_symbols()
-if not symbols:
-    st.stop()
-
-# Загрузка тикеров для расчёта изменений
-import time
-current_time = time.time()
-if current_time - st.session_state.last_ticker_update > 60 or not st.session_state.ticker_data:
-    st.session_state.ticker_data = fetch_tickers_for_symbols(symbols)
-    st.session_state.last_ticker_update = current_time
-
-ticker_data = st.session_state.ticker_data
-
-# Собираем данные для сортировки
-coins_data = []
-for sym in symbols:
-    ticker = ticker_data.get(sym, {})
-    change_24h = ticker.get('percentage', 0.0) or 0.0
-    
-    # Для 5м и 15м берём последние OHLCV
-    ohlcv_5m = fetch_ohlcv_raw(sym, '5m', 50)
-    df_5m = ohlcv_to_df(ohlcv_5m)
-    change_5m = calc_change_from_ohlcv(df_5m, 5) if not df_5m.empty else 0.0
-    
-    ohlcv_15m = fetch_ohlcv_raw(sym, '15m', 50)
-    df_15m = ohlcv_to_df(ohlcv_15m)
-    change_15m = calc_change_from_ohlcv(df_15m, 15) if not df_15m.empty else 0.0
-    
-    price = ticker.get('last', 0.0) or 0.0
-    volume = ticker.get('quoteVolume', 0.0) or 0.0
-    
-    coins_data.append({
-        'symbol': sym,
-        'price': price,
-        'change_24h': change_24h,
-        'change_5m': change_5m,
-        'change_15m': change_15m,
-        'volume': volume
-    })
-
-# Сортировка
-sort_key = st.session_state.sort_by
-if sort_key == '5m':
-    coins_data.sort(key=lambda x: x['change_5m'], reverse=True)
-elif sort_key == '15m':
-    coins_data.sort(key=lambda x: x['change_15m'], reverse=True)
-else:
-    coins_data.sort(key=lambda x: x['change_24h'], reverse=True)
-
-# Проверка на смену монеты/таймфрейма
-need_reload = (st.session_state.selected_symbol != st.session_state.last_symbol or
-               st.session_state.selected_tf != st.session_state.last_tf)
-if need_reload:
-    st.session_state.cached_df = pd.DataFrame()
-    st.session_state.last_symbol = st.session_state.selected_symbol
-    st.session_state.last_tf = st.session_state.selected_tf
-
-if st.session_state.cached_df.empty:
-    raw = fetch_ohlcv_raw(st.session_state.selected_symbol, st.session_state.selected_tf, limit=200)
-    st.session_state.cached_df = ohlcv_to_df(raw)
-
-# Основной лейаут - без отступов
-chart_col, list_col = st.columns([4, 1], gap="small")
-
-with chart_col:
-    # Хедер
-    hdr = st.container()
-    with hdr:
-        col_title, col_tf = st.columns([4, 1])
-        with col_title:
-            st.markdown(f"### {st.session_state.selected_symbol}", unsafe_allow_html=True)
-        with col_tf:
-            tf_options = ['1m', '5m', '15m', '30m', '1h', '4h', '1d']
-            selected_tf = st.selectbox(
-                "",
-                tf_options,
-                index=tf_options.index(st.session_state.selected_tf) if st.session_state.selected_tf in tf_options else 4,
-                label_visibility="collapsed"
-            )
-            if selected_tf != st.session_state.selected_tf:
-                st.session_state.selected_tf = selected_tf
-                st.rerun()
-    
-    # График
-    df = st.session_state.cached_df
-    
-    if not df.empty:
-        last_price = df['close'].iloc[-1]
-        prev_price = df['close'].iloc[-2]
-        price_up = last_price >= prev_price
+        candles = ex.fetch_ohlcv(st.session_state.coin, st.session_state.tf, limit=300)
+        df = pd.DataFrame(candles, columns=['t', 'o', 'h', 'l', 'c', 'v'])
+        df['time'] = pd.to_datetime(df['t'], unit='ms')
         
-        st.markdown(f"### {last_price:.4f} {'🟢' if price_up else '🔴'}", unsafe_allow_html=True)
+        current = df.iloc[-1]['c']
+        prev = df.iloc[-2]['c']
+        is_up = current >= prev
         
+        # Price display
+        col_p1, col_p2 = st.columns([1, 3])
+        with col_p1:
+            st.markdown(f"### {current:.6f}")
+        with col_p2:
+            chg = ((current - prev) / prev) * 100
+            color = "#00d084" if chg >= 0 else "#ff4757"
+            st.markdown(f"### <span style='color:{color}'>{chg:+.2f}%</span>", 
+                       unsafe_allow_html=True)
+        
+        # Candlestick chart
         fig = go.Figure(data=[go.Candlestick(
-            x=df['timestamp'],
-            open=df['open'],
-            high=df['high'],
-            low=df['low'],
-            close=df['close'],
-            name='OHLC',
-            increasing_line_color='#26a69a',
-            decreasing_line_color='#ef5350',
-            increasing_fillcolor='#26a69a',
-            decreasing_fillcolor='#ef5350'
+            x=df['time'],
+            open=df['o'],
+            high=df['h'],
+            low=df['l'],
+            close=df['c'],
+            increasing=dict(line=dict(color='#00d084'), fillcolor='#00d084'),
+            decreasing=dict(line=dict(color='#ff4757'), fillcolor='#ff4757')
         )])
         
         fig.update_layout(
-            height=600,
-            margin=dict(l=0, r=0, t=0, b=0),
-            xaxis_rangeslider_visible=False,
+            height=650,
+            margin=dict(l=0, r=0, t=0, b=0, pad=0),
+            xaxis=dict(
+                rangeslider=dict(visible=False),
+                showgrid=False,
+                zeroline=False
+            ),
+            yaxis=dict(
+                showgrid=True,
+                gridcolor='#1a1a1a',
+                side='right',
+                zeroline=False
+            ),
+            plot_bgcolor='#0a0a0a',
+            paper_bgcolor='#0a0a0a',
             dragmode='pan',
-            template='plotly_dark',
-            showlegend=False,
-            xaxis=dict(showgrid=False, zeroline=False),
-            yaxis=dict(showgrid=True, gridcolor='#1a1a2e', side='right', zeroline=False),
-            paper_bgcolor='#0e1117',
-            plot_bgcolor='#0e1117'
+            showlegend=False
+        )
+        
+        fig.update_xaxes(
+            showline=False,
+            tickfont=dict(size=10)
+        )
+        fig.update_yaxes(
+            showline=False,
+            tickfont=dict(size=10)
         )
         
         st.plotly_chart(
             fig,
             use_container_width=True,
-            config={'scrollZoom': True, 'displayModeBar': False, 'doubleClick': 'reset'}
+            config={
+                'scrollZoom': True,
+                'displayModeBar': False,
+                'doubleClick': 'reset',
+                'modeBarButtonsToRemove': ['lasso2d', 'select2d']
+            }
         )
         
-        # Загрузить ещё
-        if st.button("← Загрузить ещё", use_container_width=False):
-            oldest_ts = df['timestamp'].min()
-            since = int(oldest_ts.timestamp() * 1000) - 1
-            older_raw = fetch_ohlcv_raw(st.session_state.selected_symbol, st.session_state.selected_tf,
-                                        limit=100, since=since)
-            older_df = ohlcv_to_df(older_raw)
-            if not older_df.empty:
-                combined = pd.concat([older_df, df]).drop_duplicates('timestamp').sort_values('timestamp')
-                st.session_state.cached_df = combined
-                st.rerun()
-    else:
-        st.warning("Нет данных")
+    except Exception as e:
+        st.error(f"Error: {e}")
 
-with list_col:
-    # Сортировка
-    st.markdown("**Сортировка:**", unsafe_allow_html=True)
-    sort_cols = st.columns(3)
-    with sort_cols[0]:
-        if st.button("5м", use_container_width=True, 
-                     type="primary" if st.session_state.sort_by == '5m' else "secondary"):
-            st.session_state.sort_by = '5m'
+with sidebar:
+    # Sort buttons
+    st.markdown("### Sort")
+    s1, s2, s3 = st.columns(3)
+    with s1:
+        if st.button("5m", type="primary" if st.session_state.sort == 'change5' else "secondary",
+                    use_container_width=True):
+            st.session_state.sort = 'change5'
             st.rerun()
-    with sort_cols[1]:
-        if st.button("15м", use_container_width=True,
-                     type="primary" if st.session_state.sort_by == '15m' else "secondary"):
-            st.session_state.sort_by = '15m'
+    with s2:
+        if st.button("15m", type="primary" if st.session_state.sort == 'change15' else "secondary",
+                    use_container_width=True):
+            st.session_state.sort = 'change15'
             st.rerun()
-    with sort_cols[2]:
-        if st.button("24ч", use_container_width=True,
-                     type="primary" if st.session_state.sort_by == '24h' else "secondary"):
-            st.session_state.sort_by = '24h'
+    with s3:
+        if st.button("24h", type="primary" if st.session_state.sort == 'change24' else "secondary",
+                    use_container_width=True):
+            st.session_state.sort = 'change24'
             st.rerun()
     
-    # Поиск
-    search = st.text_input("", placeholder="🔍 BTC...", label_visibility="collapsed")
+    # Search
+    st.markdown("### Find")
+    search_val = st.text_input("", key="search_input", label_visibility="collapsed", 
+                               placeholder="BTC...")
+    st.session_state.search = search_val
     
-    # Список монет
-    filtered = coins_data
-    if search:
-        s = search.upper()
-        filtered = [c for c in coins_data if s in c['symbol']]
+    # Coin list
+    st.markdown("---")
     
-    with st.container(height=600):
-        for coin in filtered:
-            sym = coin['symbol']
-            change_val = coin[f'change_{st.session_state.sort_by.replace("24h", "24h")}']
-            if st.session_state.sort_by == '24h':
-                change_val = coin['change_24h']
-            elif st.session_state.sort_by == '5m':
-                change_val = coin['change_5m']
+    with st.container(height=500):
+        for item in filtered[:40]:
+            sym = item['symbol']
+            name = sym.replace('/USDT', '')
+            
+            if st.session_state.sort == 'change5':
+                chg = item['change5']
+            elif st.session_state.sort == 'change15':
+                chg = item['change15']
             else:
-                change_val = coin['change_15m']
+                chg = item['change24']
             
-            is_selected = sym == st.session_state.selected_symbol
-            change_color = '#26a69a' if change_val >= 0 else '#ef5350'
-            change_sign = '+' if change_val >= 0 else ''
+            active = "primary" if sym == st.session_state.coin else "secondary"
+            sign = "+" if chg >= 0 else ""
+            color_class = "up" if chg >= 0 else "down"
             
-            btn_type = "primary" if is_selected else "secondary"
-            
-            if st.button(
-                f"{sym.replace('/USDT', '')}  {change_sign}{change_val:.1f}%",
-                key=f"btn_{sym}",
-                use_container_width=True,
-                type=btn_type
-            ):
-                st.session_state.selected_symbol = sym
+            if st.button(f"{name}  {sign}{chg:.1f}%", 
+                        key=f"coin_{sym}",
+                        type=active,
+                        use_container_width=True):
+                st.session_state.coin = sym
                 st.rerun()
