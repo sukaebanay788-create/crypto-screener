@@ -3,7 +3,7 @@ import pandas as pd
 import requests
 import plotly.graph_objects as go
 from pycoingecko import CoinGeckoAPI
-import datetime
+import time
 
 # ------------------ НАСТРОЙКА СТРАНИЦЫ ------------------
 st.set_page_config(layout="wide", page_title="Крипто-скринер")
@@ -11,6 +11,7 @@ st.set_page_config(layout="wide", page_title="Крипто-скринер")
 # ------------------ ИНИЦИАЛИЗАЦИЯ API ------------------
 cg = CoinGeckoAPI()
 OKX_API_URL = "https://www.okx.com/api/v5/market/history-candles"
+TARGET_CANDLES = 500  # Минимальное количество свечей для стабильного расчёта EMA 450
 
 # ------------------ ФУНКЦИИ ------------------
 @st.cache_data(ttl=60)
@@ -27,32 +28,70 @@ def load_coins_list():
         return pd.DataFrame(columns=['id', 'symbol', 'name', 'current_price', 'price_change_percentage_24h'])
 
 @st.cache_data(ttl=300)
-def load_okx_klines(instId, bar="5m", limit=300):
-    """Загружает свечи через прямой запрос к OKX API (публичный, без ключей)"""
-    try:
-        params = {
-            "instId": instId,
-            "bar": bar,
-            "limit": limit
-        }
-        response = requests.get(OKX_API_URL, params=params, timeout=10)
-        response.raise_for_status()
-        data = response.json()
+def load_okx_klines(instId, bar="5m", target_candles=TARGET_CANDLES):
+    """Загружает свечи через OKX API с повторными запросами для набора target_candles."""
+    all_klines = []
+    after_timestamp = None
+    limit_per_request = 100  # Стабильный лимит на один запрос, чтобы не нагружать API
 
-        if data['code'] != '0':
-            st.error(f"Ошибка API OKX: {data['msg']}")
+    # Прогресс-бар для наглядности
+    progress_text = f"Загрузка свечей {instId}..."
+    my_bar = st.progress(0, text=progress_text)
+
+    try:
+        while len(all_klines) < target_candles:
+            params = {
+                "instId": instId,
+                "bar": bar,
+                "limit": str(limit_per_request)
+            }
+            if after_timestamp:
+                params["after"] = str(after_timestamp)
+
+            response = requests.get(OKX_API_URL, params=params, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+
+            if data['code'] != '0':
+                st.error(f"Ошибка API OKX: {data['msg']}")
+                break
+
+            new_klines = data['data']
+            
+            # Если новых данных нет, выходим из цикла
+            if not new_klines:
+                break
+
+            # Добавляем новые данные в начало списка (т.к. они идут от старых к новым)
+            all_klines = new_klines + all_klines
+
+            # Обновляем after_timestamp для следующего запроса
+            # Берём временную метку самой старой свечи в текущем ответе
+            oldest_candle_ts = int(new_klines[0][0])
+            after_timestamp = oldest_candle_ts - 1  # Небольшой сдвиг, чтобы избежать дублирования
+
+            # Обновляем прогресс-бар
+            progress_percent = min(len(all_klines) / target_candles, 1.0)
+            my_bar.progress(progress_percent, text=f"{progress_text} ({len(all_klines)}/{target_candles})")
+
+            # Небольшая пауза, чтобы не упереться в лимиты
+            time.sleep(0.2)
+
+        my_bar.empty() # Убираем прогресс-бар
+
+        if not all_klines:
             return pd.DataFrame()
 
-        klines = data['data']
-        # OKX возвращает свечи в обратном порядке
-        klines.reverse()
-
-        df = pd.DataFrame(klines, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume', 'volCcy', 'volCcyQuote', 'confirm'])
+        # Преобразуем в DataFrame
+        df = pd.DataFrame(all_klines, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume', 'volCcy', 'volCcyQuote', 'confirm'])
         df['timestamp'] = pd.to_datetime(df['timestamp'].astype(float), unit='ms')
         for col in ['open', 'high', 'low', 'close']:
             df[col] = df[col].astype(float)
+        
         return df
+
     except Exception as e:
+        my_bar.empty()
         st.error(f"Ошибка загрузки данных OKX: {e}")
         return pd.DataFrame()
 
@@ -102,7 +141,7 @@ with col_chart:
         )
 
     okx_symbol = f"{selected_symbol}-USDT"
-    df = load_okx_klines(okx_symbol, bar=timeframe, limit=1000)
+    df = load_okx_klines(okx_symbol, bar=timeframe, target_candles=TARGET_CANDLES)
 
     if not df.empty:
         fig = go.Figure()
@@ -171,5 +210,9 @@ with col_chart:
         fig.update_yaxes(showline=True, linewidth=1, linecolor='gray', mirror=True)
 
         st.plotly_chart(fig, use_container_width=True)
+        
+        # Информационное сообщение
+        if len(df) < 450:
+            st.info(f"⚠️ Загружено {len(df)} свечей. Для более точной EMA 450 рекомендуется больше 450.")
     else:
         st.warning("Не удалось загрузить график. Попробуйте другую монету.")
