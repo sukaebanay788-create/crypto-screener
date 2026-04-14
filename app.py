@@ -114,32 +114,28 @@ with col_chart:
             name='Цена',
             increasing_line_color='#26a69a',
             decreasing_line_color='#ef5350',
-            showlegend=True,
-            hoverinfo='none'
+            showlegend=True
         ))
 
         df['EMA_65'] = df['close'].ewm(span=65, adjust=False).mean()
         fig.add_trace(go.Scatter(
             x=df['timestamp'], y=df['EMA_65'],
             name='EMA 65',
-            line=dict(color='#FFA500', width=1.5),
-            hoverinfo='none'
+            line=dict(color='#FFA500', width=1.5)
         ))
 
         df['EMA_125'] = df['close'].ewm(span=125, adjust=False).mean()
         fig.add_trace(go.Scatter(
             x=df['timestamp'], y=df['EMA_125'],
             name='EMA 125',
-            line=dict(color='#1E90FF', width=1.5),
-            hoverinfo='none'
+            line=dict(color='#1E90FF', width=1.5)
         ))
 
         df['EMA_450'] = df['close'].ewm(span=450, adjust=False).mean()
         fig.add_trace(go.Scatter(
             x=df['timestamp'], y=df['EMA_450'],
             name='EMA 450',
-            line=dict(color='#FF69B4', width=1.5),
-            hoverinfo='none'
+            line=dict(color='#FF69B4', width=1.5)
         ))
 
         # Настройки графика
@@ -147,7 +143,7 @@ with col_chart:
             template="plotly_dark",
             height=800,
             margin=dict(l=20, r=20, t=40, b=20),
-            hovermode='x',
+            hovermode='x unified',
             legend=dict(
                 orientation="h",
                 yanchor="bottom",
@@ -168,15 +164,14 @@ with col_chart:
             ),
             plot_bgcolor='#0e1117',
             paper_bgcolor='#0e1117',
-            dragmode=False
+            dragmode='pan'
         )
 
         fig.update_xaxes(showline=True, linewidth=1, linecolor='gray', mirror=True)
         fig.update_yaxes(showline=True, linewidth=1, linecolor='gray', mirror=True)
 
-        # Конфигурация отображения
+        # Конфигурация отображения: панель инструментов видна
         config = {
-            'displayModeBar': False,
             'scrollZoom': True,
             'displaylogo': False
         }
