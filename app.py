@@ -21,7 +21,8 @@ st.markdown("""
 
 @st.cache_resource
 def get_exchange():
-    ex = ccxt.okx({'enableRateLimit': True, 'options': {'defaultType': 'spot'}})
+    # Binance: отдаёт 1000 свечей за ОДИН запрос, быстрый API
+    ex = ccxt.binance({'enableRateLimit': True, 'options': {'defaultType': 'spot'}})
     ex.load_markets()
     return ex
 
@@ -30,63 +31,47 @@ ex = get_exchange()
 @st.cache_data(ttl=120)
 def get_symbols():
     markets = ex.load_markets()
-    return [s for s in markets if s.endswith('/USDT') and markets[s]['active']]
+    return [s for s in markets if s.endswith('/USDT') and markets[s]['active']
+            and markets[s].get('spot', True)]
 
 @st.cache_data(ttl=20)
 def get_screener_data(symbols):
-    """Screener data — cached 20 sec, not affected by coin switch"""
     data = []
     try:
-        tickers = ex.fetch_tickers(symbols[:60])
-        for sym in symbols[:60]:
-            ticker = tickers.get(sym, {})
-            price = ticker.get('last', 0) or 0
-            change24 = ticker.get('percentage', 0) or 0
-            
-            change5 = 0
-            change15 = 0
-            try:
-                c5 = ex.fetch_ohlcv(sym, '5m', limit=12)
-                if len(c5) >= 2:
-                    change5 = ((c5[-1][4] - c5[0][4]) / c5[0][4]) * 100
-            except: pass
+        # Fetch tickers in chunks to avoid rate limit
+        for i in range(0, min(len(symbols), 80), 50):
+            chunk = symbols[i:i+50]
+            tickers = ex.fetch_tickers(chunk)
+            for sym in chunk:
+                ticker = tickers.get(sym, {})
+                price = ticker.get('last', 0) or 0
+                change24 = ticker.get('percentage', 0) or 0
                 
-            try:
-                c15 = ex.fetch_ohlcv(sym, '15m', limit=12)
-                if len(c15) >= 2:
-                    change15 = ((c15[-1][4] - c15[0][4]) / c15[0][4]) * 100
-            except: pass
-            
-            data.append({'symbol': sym, 'price': price, 'change24': change24,
-                        'change5': change5, 'change15': change15})
+                change5 = 0
+                change15 = 0
+                try:
+                    c5 = ex.fetch_ohlcv(sym, '5m', limit=3)
+                    if len(c5) >= 2:
+                        change5 = ((c5[-1][4] - c5[0][4]) / c5[0][4]) * 100
+                except: pass
+                    
+                try:
+                    c15 = ex.fetch_ohlcv(sym, '15m', limit=3)
+                    if len(c15) >= 2:
+                        change15 = ((c15[-1][4] - c15[0][4]) / c15[0][4]) * 100
+                except: pass
+                
+                data.append({'symbol': sym, 'price': price, 'change24': change24,
+                            'change5': change5, 'change15': change15})
     except: pass
     return data
 
 def get_chart_data(symbol, timeframe):
-    """Chart data — fresh fetch with pagination, no cache for real-time"""
-    tf_ms = {'1m':60000,'5m':300000,'30m':1800000,'4h':14400000}
-    candle_ms = tf_ms.get(timeframe, 3600000)
-    
-    candles = ex.fetch_ohlcv(symbol, timeframe, limit=100)
+    """Binance отдаёт до 1000 свечей за ОДИН запрос — без пагинации!"""
+    candles = ex.fetch_ohlcv(symbol, timeframe, limit=1000)
     if not candles:
         return pd.DataFrame()
-    
-    all_candles = candles[:]
-    for _ in range(9):
-        time.sleep(0.1)
-        oldest_ts = all_candles[0][0]
-        since = oldest_ts - (100 * candle_ms)
-        older = ex.fetch_ohlcv(symbol, timeframe, limit=100, since=since)
-        if not older:
-            break
-        older = [c for c in older if c[0] < oldest_ts]
-        if not older:
-            break
-        all_candles = older + all_candles
-        if len(older) < 100:
-            break
-    
-    df = pd.DataFrame(all_candles, columns=['t','o','h','l','c','v'])
+    df = pd.DataFrame(candles, columns=['t','o','h','l','c','v'])
     df['time'] = pd.to_datetime(df['t'], unit='ms')
     return df
 
@@ -122,10 +107,8 @@ with chart_area:
                 st.session_state.tf = tf
                 st.rerun()
 
-    # Auto-refresh chart every 5 sec
-    now = time.time()
+    # Chart
     chart_container = st.container()
-    
     with chart_container:
         try:
             df = get_chart_data(st.session_state.coin, st.session_state.tf)
@@ -158,7 +141,7 @@ with chart_area:
                     'doubleClick': 'reset', 'modeBarButtonsToRemove': ['lasso2d', 'select2d']
                 })
                 
-                # Price + change display
+                # Price display
                 st.markdown(
                     f"`{current:.6f}`  "
                     f"<span style='color:{color};font-weight:bold;font-size:18px'>{chg:+.2f}%</span>",
@@ -167,9 +150,9 @@ with chart_area:
         except Exception as e:
             st.warning(str(e))
 
-    # Auto-refresh
-    st_autorefresh = now - st.session_state.last_fetch > 5
-    if st_autorefresh:
+    # Auto-refresh chart every 5 sec
+    now = time.time()
+    if now - st.session_state.last_fetch > 5:
         st.session_state.last_fetch = now
         time.sleep(0.5)
         st.rerun()
@@ -198,7 +181,7 @@ with sidebar:
     search_val = st.text_input("", key="search_input", label_visibility="collapsed",
                                placeholder="BTC...")
     
-    # Sort screen_data
+    # Sort
     screen_data.sort(key=lambda x: x[st.session_state.sort], reverse=True)
     
     # Filter — instant, no API calls
