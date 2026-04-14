@@ -1,9 +1,9 @@
 import streamlit as st
 import pandas as pd
-from pycoingecko import CoinGeckoAPI
+import requests
 import plotly.graph_objects as go
-from binance.client import Client
-import datetime
+from pycoingecko import CoinGeckoAPI
+from datetime import datetime
 
 # ------------------ НАСТРОЙКА СТРАНИЦЫ ------------------
 st.set_page_config(layout="wide", page_title="Крипто-скринер")
@@ -11,14 +11,8 @@ st.set_page_config(layout="wide", page_title="Крипто-скринер")
 # ------------------ ИНИЦИАЛИЗАЦИЯ API ------------------
 cg = CoinGeckoAPI()
 
-# Используем публичный API Binance, который работает в Streamlit Cloud
-@st.cache_resource
-def get_binance_client():
-    client = Client(tld=None)
-    client.API_URL = "https://data-api.binance.vision/api/v3"
-    return client
-
-binance_client = get_binance_client()
+# Публичный эндпоинт Binance (работает без ключей)
+BINANCE_API_URL = "https://api.binance.com/api/v3"
 
 # ------------------ ФУНКЦИИ ------------------
 @st.cache_data(ttl=60)
@@ -36,9 +30,19 @@ def load_coins_list():
 
 @st.cache_data(ttl=300)
 def load_binance_klines(symbol, interval, limit=1000):
-    """Загружает свечные данные с Binance и подготавливает для графика"""
+    """Загружает свечи через прямой запрос к Binance API (без сторонних библиотек)"""
     try:
-        klines = binance_client.get_klines(symbol=symbol, interval=interval, limit=limit)
+        url = f"{BINANCE_API_URL}/klines"
+        params = {
+            "symbol": symbol,
+            "interval": interval,
+            "limit": limit
+        }
+        # Увеличиваем таймаут и добавляем заголовки
+        response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()
+        klines = response.json()
+
         df = pd.DataFrame(klines, columns=[
             'timestamp', 'open', 'high', 'low', 'close', 'volume',
             'close_time', 'quote_asset_volume', 'number_of_trades',
