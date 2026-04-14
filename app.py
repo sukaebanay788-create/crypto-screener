@@ -16,22 +16,18 @@ st.set_page_config(
 # ------------------ СТИЛИ (CSS для красоты) ------------------
 st.markdown("""
 <style>
-    /* Убираем отступы и делаем интерфейс плотнее */
     .block-container {
         padding-top: 1rem;
         padding-bottom: 0rem;
         padding-left: 1rem;
         padding-right: 1rem;
     }
-    /* Стили для заголовков */
     .stMarkdown h3 {
         margin-bottom: 0.5rem;
     }
-    /* Таблица справа - убираем лишние границы */
     .stDataFrame {
         border: none;
     }
-    /* Фон и цветовая схема */
     .stApp {
         background-color: #0e1117;
     }
@@ -45,7 +41,6 @@ OKX_API_URL = "https://www.okx.com/api/v5/market/history-candles"
 # ------------------ ФУНКЦИИ ------------------
 @st.cache_data(ttl=60)
 def load_coins_list():
-    """Список топ-100 монет с CoinGecko (сортировка по росту за 24ч)"""
     try:
         data = cg.get_coins_markets(vs_currency='usd', order='market_cap_desc', per_page=100, page=1)
         df = pd.DataFrame(data)
@@ -58,7 +53,6 @@ def load_coins_list():
 
 @st.cache_data(ttl=300)
 def load_okx_klines(instId, bar="5m", limit=300):
-    """Загружает свечи через OKX API (один запрос)"""
     try:
         params = {
             "instId": instId,
@@ -88,10 +82,10 @@ def load_okx_klines(instId, bar="5m", limit=300):
 # ------------------ ЗАГРУЗКА СПИСКА МОНЕТ ------------------
 df_coins = load_coins_list()
 
-# ------------------ ИНТЕРФЕЙС: ДВЕ КОЛОНКИ ------------------
+# ------------------ ИНТЕРФЕЙС ------------------
 col_chart, col_list = st.columns([5, 1.2])
 
-# ------------------ ПРАВАЯ КОЛОНКА (СПИСОК) ------------------
+# ------------------ ПРАВАЯ КОЛОНКА ------------------
 with col_list:
     st.markdown("### 🔥 Топ роста за 24ч")
 
@@ -120,7 +114,6 @@ with col_list:
 
 # ------------------ ЛЕВАЯ КОЛОНКА (ГРАФИК) ------------------
 with col_chart:
-    # Верхняя панель с названием и таймфреймом
     top_col1, top_col2, top_col3 = st.columns([2, 2, 1])
     with top_col1:
         st.markdown(f"## {selected_symbol}/USDT")
@@ -132,12 +125,10 @@ with col_chart:
             label_visibility="collapsed"
         )
 
-    # Загрузка данных
     okx_symbol = f"{selected_symbol}-USDT"
     df = load_okx_klines(okx_symbol, bar=timeframe, limit=300)
 
     if not df.empty:
-        # Создаём фигуру
         fig = go.Figure()
 
         # Свечи
@@ -150,8 +141,8 @@ with col_chart:
             name='Цена',
             increasing_line_color='#26a69a',
             decreasing_line_color='#ef5350',
-            showlegend=True,
-            hoverinfo='x+y+open+high+low+close'
+            showlegend=True
+            # hoverinfo по умолчанию = 'all' — показывает все значения при наведении
         ))
 
         # EMA 65
@@ -181,7 +172,6 @@ with col_chart:
             hoverinfo='none'
         ))
 
-        # Настройки графика (стиль TradingView)
         fig.update_layout(
             template="plotly_dark",
             height=750,
@@ -224,7 +214,6 @@ with col_chart:
             dragmode='pan'
         )
 
-        # Конфигурация (панель инструментов скрыта, но зум колесом работает)
         config = {
             'displayModeBar': False,
             'scrollZoom': True,
@@ -233,7 +222,7 @@ with col_chart:
 
         st.plotly_chart(fig, use_container_width=True, config=config)
 
-        # Дополнительная информация (цена и изменение)
+        # Метрики
         col1, col2, col3 = st.columns(3)
         current_price = df['close'].iloc[-1]
         prev_price = df['close'].iloc[-2] if len(df) > 1 else current_price
