@@ -1,15 +1,14 @@
 import streamlit as st
 import ccxt
 import pandas as pd
-import plotly.graph_objects as go
 import time
+import json
 
 st.set_page_config(layout="wide", page_title="Screener", initial_sidebar_state="collapsed")
 
 st.markdown("""
 <style>
     .block-container { padding: 0.5rem 1rem; max-width: 100%; }
-    .stPlotlyChart { margin: 0; padding: 0; }
     div[data-testid="column"] { padding: 0px !important; }
     .element-container { margin-bottom: 0px !important; }
     button[kind="secondary"], button[kind="primary"] {
@@ -21,8 +20,7 @@ st.markdown("""
 
 @st.cache_resource
 def get_exchange():
-    # Пробуем биржи по порядку — та что доступна
-    for name in ['binance', 'okx', 'bybit', 'bitget']:
+    for name in ['bybit', 'okx', 'bitget', 'binance']:
         try:
             if name == 'binance':
                 ex = ccxt.binance({'enableRateLimit': True, 'options': {'defaultType': 'spot'}})
@@ -36,7 +34,7 @@ def get_exchange():
             return ex
         except Exception:
             continue
-    st.error("Не удалось подключиться ни к одной бирже")
+    st.error("No exchange available")
     st.stop()
 
 ex = get_exchange()
@@ -52,7 +50,6 @@ def get_symbols():
 def get_screener_data(symbols):
     data = []
     try:
-        # Fetch tickers in chunks to avoid rate limit
         for i in range(0, min(len(symbols), 80), 50):
             chunk = symbols[i:i+50]
             tickers = ex.fetch_tickers(chunk)
@@ -81,14 +78,11 @@ def get_screener_data(symbols):
     return data
 
 def get_chart_data(symbol, timeframe):
-    """Binance отдаёт 1000, другие биржи могут меньше — без пагинации"""
-    limit = 1000 if exchange_name == 'BINANCE' else 500
+    limit = 1000
     candles = ex.fetch_ohlcv(symbol, timeframe, limit=limit)
     if not candles:
-        return pd.DataFrame()
-    df = pd.DataFrame(candles, columns=['t','o','h','l','c','v'])
-    df['time'] = pd.to_datetime(df['t'], unit='ms')
-    return df
+        return []
+    return candles
 
 # ── State ──
 if 'coin' not in st.session_state:
@@ -110,7 +104,7 @@ chart_area, sidebar = st.columns([5, 1])
 
 # ── CHART AREA ──
 with chart_area:
-    # TF buttons
+    # Top bar
     tfs = ['1m', '5m', '30m', '4h']
     col_ex, col_tfs = st.columns([1, 3])
     with col_ex:
@@ -125,39 +119,87 @@ with chart_area:
                 st.session_state.tf = tf
                 st.rerun()
 
-    # Chart
+    # TradingView Chart via HTML component
     chart_container = st.container()
     with chart_container:
         try:
-            df = get_chart_data(st.session_state.coin, st.session_state.tf)
+            candles = get_chart_data(st.session_state.coin, st.session_state.tf)
             
-            if not df.empty:
+            if candles:
+                df = pd.DataFrame(candles, columns=['t','o','h','l','c','v'])
                 current = df.iloc[-1]['c']
                 prev = df.iloc[-2]['c'] if len(df) > 1 else current
                 chg = ((current - prev) / prev) * 100
                 color = "#00d084" if chg >= 0 else "#ff4757"
                 
-                fig = go.Figure(data=[go.Candlestick(
-                    x=df['time'], open=df['o'], high=df['h'], low=df['l'], close=df['c'],
-                    increasing=dict(line=dict(color='#00d084'), fillcolor='#00d084'),
-                    decreasing=dict(line=dict(color='#ff4757'), fillcolor='#ff4757')
-                )])
+                # Prepare data for TradingView
+                tv_data = []
+                for _, row in df.iterrows():
+                    tv_data.append({
+                        'time': int(row['t'] / 1000),
+                        'open': float(row['o']),
+                        'high': float(row['h']),
+                        'low': float(row['l']),
+                        'close': float(row['c']),
+                    })
                 
-                fig.update_layout(
-                    height=720,
-                    margin=dict(l=0, r=0, t=0, b=0),
-                    xaxis=dict(rangeslider=dict(visible=False), showgrid=False, zeroline=False),
-                    yaxis=dict(showgrid=True, gridcolor='#1a1a1a', side='right', zeroline=False),
-                    plot_bgcolor='#0a0a0a', paper_bgcolor='#0a0a0a',
-                    dragmode='pan', showlegend=False
-                )
-                fig.update_xaxes(showline=False, tickfont=dict(size=10))
-                fig.update_yaxes(showline=False, tickfont=dict(size=10))
+                tv_json = json.dumps(tv_data)
                 
-                st.plotly_chart(fig, use_container_width=True, config={
-                    'scrollZoom': True, 'displayModeBar': False,
-                    'doubleClick': 'reset', 'modeBarButtonsToRemove': ['lasso2d', 'select2d']
-                })
+                st.components.v1.html(f"""
+                <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
+                <div id="chart" style="width:100%;height:720px;background:#0a0a0a;"></div>
+                <script>
+                const chart = LightweightCharts.createChart(document.getElementById('chart'), {{
+                    width: document.getElementById('chart').clientWidth,
+                    height: 720,
+                    layout: {{
+                        background: {{type: 'solid', color: '#0a0a0a'}},
+                        textColor: '#888',
+                    }},
+                    grid: {{
+                        vertLines: {{color: '#1a1a1a'}},
+                        horzLines: {{color: '#1a1a1a'}},
+                    }},
+                    crosshair: {{
+                        mode: LightweightCharts.CrosshairMode.Normal,
+                    }},
+                    rightPriceScale: {{
+                        borderColor: '#1a1a1a',
+                    }},
+                    timeScale: {{
+                        borderColor: '#1a1a1a',
+                        timeVisible: true,
+                        secondsVisible: false,
+                    }},
+                    handleScroll: {{
+                        mouseWheel: true,
+                        pressedMouseMove: true,
+                    }},
+                    handleScale: {{
+                        axisPressedMouseMove: true,
+                        mouseWheel: true,
+                        pinch: true,
+                    }},
+                }});
+                
+                const candlestickSeries = chart.addCandlestickSeries({{
+                    upColor: '#00d084',
+                    downColor: '#ff4757',
+                    borderUpColor: '#00d084',
+                    borderDownColor: '#ff4757',
+                    wickUpColor: '#00d084',
+                    wickDownColor: '#ff4757',
+                }});
+                
+                candlestickSeries.setData({tv_data});
+                
+                chart.timeScale().fitContent();
+                
+                window.addEventListener('resize', () => {{
+                    chart.applyOptions({{ width: document.getElementById('chart').clientWidth }});
+                }});
+                </script>
+                """, height=720)
                 
                 # Price display
                 st.markdown(
@@ -168,7 +210,7 @@ with chart_area:
         except Exception as e:
             st.warning(str(e))
 
-    # Auto-refresh chart every 5 sec
+    # Auto-refresh
     now = time.time()
     if now - st.session_state.last_fetch > 5:
         st.session_state.last_fetch = now
@@ -177,7 +219,6 @@ with chart_area:
 
 # ── SIDEBAR ──
 with sidebar:
-    # Sort buttons
     s1, s2, s3 = st.columns(3)
     with s1:
         if st.button("5m", type="primary" if st.session_state.sort == 'change5' else "secondary",
@@ -195,20 +236,16 @@ with sidebar:
             st.session_state.sort = 'change24'
             st.rerun()
     
-    # Search
     search_val = st.text_input("", key="search_input", label_visibility="collapsed",
                                placeholder="BTC...")
     
-    # Sort
     screen_data.sort(key=lambda x: x[st.session_state.sort], reverse=True)
     
-    # Filter — instant, no API calls
     filtered = screen_data
     if search_val:
         s = search_val.upper()
         filtered = [x for x in screen_data if s in x['symbol'].replace('/USDT', '')]
     
-    # Coin list
     with st.container(height=550):
         for item in filtered[:40]:
             sym = item['symbol']
