@@ -97,40 +97,64 @@ with chart_area:
                 st.session_state.tf = tf
                 st.rerun()
 
-    # TradingView Widget — данные загружаются автоматически
+    # Chart with TradingView Lightweight Charts + Binance API
     chart_container = st.container()
     with chart_container:
-        tv_symbol = st.session_state.coin.replace('/', '')
-        tv_tf_map = {'1m': '1', '5m': '5', '30m': '30', '4h': '240'}
-        tv_interval = tv_tf_map.get(st.session_state.tf, '60')
+        pair = st.session_state.coin.replace('/', '')
+        tf_map = {'1m': '1m', '5m': '5m', '30m': '30m', '4h': '4h'}
+        interval = tf_map.get(st.session_state.tf, '1h')
         
         st.components.v1.html(f"""
-        <div class="tradingview-widget-container" style="width:100%;height:720px;">
-          <div id="tradingview_chart" style="width:100%;height:100%;"></div>
-          <script src="https://s3.tradingview.com/tv.js"></script>
-          <script>
-            new TradingView.widget({{
-              "width": "100%",
-              "height": "100%",
-              "symbol": "BINANCE:{tv_symbol}",
-              "interval": "{tv_interval}",
-              "timezone": "Etc/UTC",
-              "theme": "dark",
-              "style": "1",
-              "locale": "en",
-              "toolbar_bg": "#0a0a0a",
-              "enable_publishing": false,
-              "hide_side_toolbar": false,
-              "allow_symbol_change": true,
-              "container_id": "tradingview_chart",
-              "studies": [],
-              "save_image": false,
-              "details": false,
-              "hotlist": false,
-              "calendar": false,
+        <div id="chart" style="width:100%;height:720px;background:#0a0a0a;"></div>
+        <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
+        <script>
+        async function loadData() {{
+            const resp = await fetch('https://api.binance.com/api/v3/klines?symbol={pair}&interval={interval}&limit=1000');
+            const data = await resp.json();
+            
+            const candles = data.map(k => ({{
+                time: Math.floor(k[0] / 1000),
+                open: parseFloat(k[1]),
+                high: parseFloat(k[2]),
+                low: parseFloat(k[3]),
+                close: parseFloat(k[4])
+            }}));
+            
+            const chart = LightweightCharts.createChart(document.getElementById('chart'), {{
+                width: document.getElementById('chart').clientWidth,
+                height: 720,
+                layout: {{
+                    background: {{type: 'solid', color: '#0a0a0a'}},
+                    textColor: '#888',
+                }},
+                grid: {{
+                    vertLines: {{color: '#1a1a1a'}},
+                    horzLines: {{color: '#1a1a1a'}},
+                }},
+                rightPriceScale: {{borderColor: '#1a1a1a'}},
+                timeScale: {{borderColor: '#1a1a1a', timeVisible: true}},
+                handleScroll: {{mouseWheel: true, pressedMouseMove: true}},
             }});
-          </script>
-        </div>
+            
+            const series = chart.addCandlestickSeries({{
+                upColor: '#00d084',
+                downColor: '#ff4757',
+                borderUpColor: '#00d084',
+                borderDownColor: '#ff4757',
+                wickUpColor: '#00d084',
+                wickDownColor: '#ff4757',
+            }});
+            
+            series.setData(candles);
+            chart.timeScale().fitContent();
+        }}
+        
+        loadData();
+        window.addEventListener('resize', () => {{
+            const chartEl = document.getElementById('chart');
+            if (chartEl) chartEl.style.width = '100%';
+        }});
+        </script>
         """, height=720)
 
 # ── SIDEBAR ──
