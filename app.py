@@ -3,9 +3,40 @@ import pandas as pd
 import requests
 import plotly.graph_objects as go
 from pycoingecko import CoinGeckoAPI
+from datetime import datetime
 
 # ------------------ НАСТРОЙКА СТРАНИЦЫ ------------------
-st.set_page_config(layout="wide", page_title="Крипто-скринер")
+st.set_page_config(
+    page_title="Crypto Screener",
+    page_icon="📈",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
+
+# ------------------ СТИЛИ (CSS для красоты) ------------------
+st.markdown("""
+<style>
+    /* Убираем отступы и делаем интерфейс плотнее */
+    .block-container {
+        padding-top: 1rem;
+        padding-bottom: 0rem;
+        padding-left: 1rem;
+        padding-right: 1rem;
+    }
+    /* Стили для заголовков */
+    .stMarkdown h3 {
+        margin-bottom: 0.5rem;
+    }
+    /* Таблица справа - убираем лишние границы */
+    .stDataFrame {
+        border: none;
+    }
+    /* Фон и цветовая схема */
+    .stApp {
+        background-color: #0e1117;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # ------------------ ИНИЦИАЛИЗАЦИЯ API ------------------
 cg = CoinGeckoAPI()
@@ -62,7 +93,7 @@ col_chart, col_list = st.columns([5, 1.2])
 
 # ------------------ ПРАВАЯ КОЛОНКА (СПИСОК) ------------------
 with col_list:
-    st.markdown("### 🔥 Рост за 24ч")
+    st.markdown("### 🔥 Топ роста за 24ч")
 
     if df_coins.empty:
         st.warning("Нет данных")
@@ -89,22 +120,27 @@ with col_list:
 
 # ------------------ ЛЕВАЯ КОЛОНКА (ГРАФИК) ------------------
 with col_chart:
-    header_col1, header_col2 = st.columns([3, 1])
-    with header_col1:
-        st.markdown(f"### {selected_symbol}/USDT")
-    with header_col2:
+    # Верхняя панель с названием и таймфреймом
+    top_col1, top_col2, top_col3 = st.columns([2, 2, 1])
+    with top_col1:
+        st.markdown(f"## {selected_symbol}/USDT")
+    with top_col3:
         timeframe = st.selectbox(
             "Таймфрейм",
             options=['1m', '5m', '30m', '1H', '4H'],
-            index=1  # 5m по умолчанию
+            index=1,
+            label_visibility="collapsed"
         )
 
+    # Загрузка данных
     okx_symbol = f"{selected_symbol}-USDT"
     df = load_okx_klines(okx_symbol, bar=timeframe, limit=300)
 
     if not df.empty:
+        # Создаём фигуру
         fig = go.Figure()
 
+        # Свечи
         fig.add_trace(go.Candlestick(
             x=df['timestamp'],
             open=df['open'],
@@ -114,68 +150,102 @@ with col_chart:
             name='Цена',
             increasing_line_color='#26a69a',
             decreasing_line_color='#ef5350',
-            showlegend=True
+            showlegend=True,
+            hoverinfo='x+y+open+high+low+close'
         ))
 
+        # EMA 65
         df['EMA_65'] = df['close'].ewm(span=65, adjust=False).mean()
         fig.add_trace(go.Scatter(
             x=df['timestamp'], y=df['EMA_65'],
             name='EMA 65',
-            line=dict(color='#FFA500', width=1.5)
+            line=dict(color='#FFA500', width=1.8),
+            hoverinfo='none'
         ))
 
+        # EMA 125
         df['EMA_125'] = df['close'].ewm(span=125, adjust=False).mean()
         fig.add_trace(go.Scatter(
             x=df['timestamp'], y=df['EMA_125'],
             name='EMA 125',
-            line=dict(color='#1E90FF', width=1.5)
+            line=dict(color='#1E90FF', width=1.8),
+            hoverinfo='none'
         ))
 
+        # EMA 450
         df['EMA_450'] = df['close'].ewm(span=450, adjust=False).mean()
         fig.add_trace(go.Scatter(
             x=df['timestamp'], y=df['EMA_450'],
             name='EMA 450',
-            line=dict(color='#FF69B4', width=1.5)
+            line=dict(color='#FF69B4', width=1.8),
+            hoverinfo='none'
         ))
 
-        # Настройки графика
+        # Настройки графика (стиль TradingView)
         fig.update_layout(
             template="plotly_dark",
-            height=800,
-            margin=dict(l=20, r=20, t=40, b=20),
+            height=750,
+            margin=dict(l=10, r=10, t=40, b=10),
             hovermode='x unified',
             legend=dict(
                 orientation="h",
-                yanchor="bottom",
-                y=1.02,
+                yanchor="top",
+                y=0.99,
                 xanchor="left",
-                x=0
+                x=0.01,
+                bgcolor='rgba(0,0,0,0.3)',
+                font=dict(size=12)
             ),
             xaxis_rangeslider_visible=False,
             xaxis=dict(
                 type='category',
                 showgrid=True,
-                gridcolor='rgba(128,128,128,0.2)'
+                gridcolor='rgba(128,128,128,0.15)',
+                gridwidth=0.5,
+                zeroline=False,
+                showline=True,
+                linewidth=1,
+                linecolor='rgba(128,128,128,0.5)',
+                mirror=True
             ),
             yaxis=dict(
                 showgrid=True,
-                gridcolor='rgba(128,128,128,0.2)',
-                side='right'
+                gridcolor='rgba(128,128,128,0.15)',
+                gridwidth=0.5,
+                zeroline=False,
+                side='right',
+                showline=True,
+                linewidth=1,
+                linecolor='rgba(128,128,128,0.5)',
+                mirror=True
             ),
             plot_bgcolor='#0e1117',
             paper_bgcolor='#0e1117',
             dragmode='pan'
         )
 
-        fig.update_xaxes(showline=True, linewidth=1, linecolor='gray', mirror=True)
-        fig.update_yaxes(showline=True, linewidth=1, linecolor='gray', mirror=True)
-
-        # Конфигурация отображения: панель инструментов видна
+        # Конфигурация (панель инструментов скрыта, но зум колесом работает)
         config = {
+            'displayModeBar': False,
             'scrollZoom': True,
             'displaylogo': False
         }
 
         st.plotly_chart(fig, use_container_width=True, config=config)
+
+        # Дополнительная информация (цена и изменение)
+        col1, col2, col3 = st.columns(3)
+        current_price = df['close'].iloc[-1]
+        prev_price = df['close'].iloc[-2] if len(df) > 1 else current_price
+        change = current_price - prev_price
+        change_percent = (change / prev_price) * 100 if prev_price != 0 else 0
+
+        with col1:
+            st.metric("Текущая цена", f"${current_price:,.4f}", 
+                     delta=f"{change:+,.4f} ({change_percent:+.2f}%)")
+        with col2:
+            st.caption(f"Обновлено: {datetime.now().strftime('%H:%M:%S')}")
+        with col3:
+            st.caption(f"Таймфрейм: {timeframe}")
     else:
         st.warning("Не удалось загрузить график. Попробуйте другую монету.")
