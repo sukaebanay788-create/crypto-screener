@@ -25,7 +25,71 @@ def get_exchange():
     return ex
 
 ex = get_exchange()
-exchange_name = ex.id.upper()
+
+def get_binance_ohlcv_via_proxy(symbol, timeframe, limit=1000):
+    """Binance данные через прямой API — работает на Streamlit Cloud"""
+    import requests
+    
+    # Binance map timeframe to kline interval
+    tf_map = {'1m': '1m', '5m': '5m', '30m': '30m', '4h': '4h', '1h': '1h'}
+    interval = tf_map.get(timeframe, '1h')
+    
+    # Convert symbol format: BTC/USDT -> BTCUSDT
+    pair = symbol.replace('/', '')
+    
+    all_candles = []
+    
+    for _ in range(10):  # Max 10 requests = 10000 candles
+        try:
+            url = 'https://api.binance.com/api/v3/klines'
+            params = {
+                'symbol': pair,
+                'interval': interval,
+                'limit': min(1000, limit - len(all_candles))
+            }
+            
+            if all_candles:
+                # Get data before oldest
+                params['endTime'] = all_candles[0][0] - 1
+            
+            resp = requests.get(url, params=params, timeout=10)
+            if resp.status_code != 200:
+                break
+            
+            data = resp.json()
+            if not data:
+                break
+            
+            new_candles = []
+            for k in data:
+                new_candles.append([
+                    k[0],  # timestamp
+                    float(k[1]),  # open
+                    float(k[2]),  # high
+                    float(k[3]),  # low
+                    float(k[4]),  # close
+                    float(k[5]),  # volume
+                ])
+            
+            # Filter duplicates
+            if all_candles:
+                new_candles = [c for c in new_candles if c[0] < all_candles[0][0]]
+            
+            if not new_candles:
+                break
+                
+            all_candles = new_candles + all_candles
+            time.sleep(0.1)
+            
+            if len(new_candles) < 1000:
+                break
+            if len(all_candles) >= limit:
+                break
+                
+        except Exception:
+            break
+    
+    return all_candles
 
 @st.cache_data(ttl=120)
 def get_symbols():
@@ -76,31 +140,9 @@ def get_screener_data():
         return []
 
 def get_chart_data(symbol, timeframe, limit=1000):
-    """OKX pagination — 100 candles per request, up to 1000"""
-    tf_ms = {'1m':60000,'5m':300000,'30m':1800000,'4h':14400000,
-             '1h':3600000,'2h':7200000,'12h':43200000,'1d':86400000}
-    candle_ms = tf_ms.get(timeframe, 3600000)
-    
-    candles = ex.fetch_ohlcv(symbol, timeframe, limit=100)
-    if not candles:
-        return []
-    
-    all_candles = candles[:]
-    for _ in range(9):
-        time.sleep(0.1)
-        oldest_ts = all_candles[0][0]
-        since = oldest_ts - (100 * candle_ms)
-        older = ex.fetch_ohlcv(symbol, timeframe, limit=100, since=since)
-        if not older or len(older) == 0:
-            break
-        older = [c for c in older if c[0] < oldest_ts]
-        if not older:
-            break
-        all_candles = older + all_candles
-        if len(all_candles) >= limit:
-            break
-    
-    return all_candles
+    """Use Binance data for charts — 1000 candles per request!"""
+    candles = get_binance_ohlcv_via_proxy(symbol, timeframe, limit)
+    return candles
 
 # ── State ──
 if 'coin' not in st.session_state:
@@ -128,7 +170,7 @@ with chart_area:
     tfs = ['1m', '5m', '30m', '4h']
     col_ex, col_tfs = st.columns([1, 3])
     with col_ex:
-        st.markdown(f"`{exchange_name}`")
+        st.markdown("`Binance`")
     cols = col_tfs.columns(len(tfs))
     for i, tf in enumerate(tfs):
         with cols[i]:
