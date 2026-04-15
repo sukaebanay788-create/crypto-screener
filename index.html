@@ -2,132 +2,66 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Крипто скринер</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crypto Screener</title>
     <style>
-        /* Сброс всех отступов и полей */
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
         }
-
         html, body {
             width: 100%;
             height: 100vh;
             overflow: hidden;
             background-color: #0e1117;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
         }
-
         .container {
             display: flex;
             width: 100%;
             height: 100vh;
-            gap: 0;                /* Никаких зазоров между колонками */
         }
-
-        /* Левая колонка — график */
         .chart-container {
-            flex: 4;               /* 80% ширины */
+            flex: 4;
             height: 100vh;
-            background: #0e1117;
-            position: relative;
         }
-
-        /* Правая колонка — скринер */
         .screener-container {
-            flex: 1;               /* 20% ширины */
+            flex: 1;
             height: 100vh;
-            background: #0e1117;
-            position: relative;
-            border-left: 1px solid #2a2e39; /* Тонкая разделительная линия, можно убрать */
+            border-left: 1px solid #2a2e39;
         }
-
-        /* Убираем стандартные отступы у виджетов TradingView */
-        .tradingview-widget-container {
-            height: 100%;
+        /* Обеспечиваем, что виджеты займут всю доступную область */
+        tv-advanced-chart, tv-screener {
+            display: block;
             width: 100%;
-        }
-
-        /* Скрываем копирайт TradingView (по желанию, но он всё равно может появляться) */
-        .tradingview-widget-copyright {
-            display: none !important;
+            height: 100%;
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <!-- ЛЕВАЯ ЧАСТЬ: ГРАФИК -->
         <div class="chart-container">
-            <!-- TradingView Widget BEGIN -->
-            <div class="tradingview-widget-container">
-                <div id="tradingview_chart" style="height: 100%; width: 100%;"></div>
-                <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
-                <script type="text/javascript">
-                new TradingView.widget({
-                    "width": "100%",
-                    "height": "100%",
-                    "symbol": "BINANCE:BTCUSDT",
-                    "interval": "60",
-                    "timezone": "Etc/UTC",
-                    "theme": "dark",
-                    "style": "1",
-                    "locale": "ru",
-                    "toolbar_bg": "#f1f3f6",
-                    "enable_publishing": false,
-                    "hide_side_toolbar": true,        // Скрываем правую панель инструментов
-                    "allow_symbol_change": true,
-                    "save_image": false,
-                    "container_id": "tradingview_chart",
-                    "studies": [],                     // Никаких индикаторов по умолчанию
-                    "disabled_features": [
-                        "header_widget",               // Убираем верхнюю панель с поиском
-                        "header_compare",
-                        "header_symbol_search",
-                        "header_undo_redo",
-                        "header_saveload",
-                        "header_screenshot",
-                        "header_fullscreen_button",
-                        "left_toolbar",
-                        "control_bar",
-                        "timeframes_toolbar"
-                    ],
-                    "enabled_features": [
-                        "hide_left_toolbar_by_default"
-                    ],
-                    "overrides": {
-                        "paneProperties.background": "#0e1117",
-                        "paneProperties.vertGridProperties.color": "#2a2e39",
-                        "paneProperties.horzGridProperties.color": "#2a2e39"
-                    }
-                });
-                </script>
-            </div>
-            <!-- TradingView Widget END -->
+            <tv-advanced-chart
+                symbol="BINANCE:BTCUSDT"
+                theme="dark"
+                interval="60"
+                locale="ru"
+                hide_side_toolbar="true"
+                allow_symbol_change="true"
+                disabled_features='["header_widget", "left_toolbar", "control_bar", "timeframes_toolbar"]'
+            ></tv-advanced-chart>
         </div>
-
-        <!-- ПРАВАЯ ЧАСТЬ: СКРИНЕР -->
         <div class="screener-container">
-            <!-- TradingView Widget BEGIN -->
-            <div class="tradingview-widget-container">
-                <div id="tradingview_screener" style="height: 100%; width: 100%;"></div>
-                <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-screener.js" async>
-                {
-                    "width": "100%",
-                    "height": "100%",
-                    "defaultColumn": "overview",
-                    "defaultScreen": "top_gainers",
-                    "market": "crypto",
-                    "showToolbar": true,
-                    "colorTheme": "dark",
-                    "locale": "ru",
-                    "container_id": "tradingview_screener"
-                }
-                </script>
-            </div>
-            <!-- TradingView Widget END -->
+            <tv-screener
+                market="crypto"
+                default-screen="top_gainers"
+                theme="dark"
+                locale="ru"
+            ></tv-screener>
         </div>
     </div>
+
+    <!-- Подключаем официальный скрипт-загрузчик виджетов TradingView -->
+    <script src="https://s3.tradingview.com/tradingview-widget-loader.js"></script>
 </body>
 </html>
