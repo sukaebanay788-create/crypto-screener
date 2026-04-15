@@ -3,16 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Крипто скринер</title>
+    <title>Крипто скринер (реалтайм)</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         html, body { width: 100%; height: 100vh; overflow: hidden; background: #1e1e1e; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
         .container { display: flex; width: 100%; height: 100vh; }
         
-        /* Левая часть — график */
         .chart-wrapper { flex: 4; height: 100vh; display: flex; flex-direction: column; background: #1e1e1e; }
         
-        /* Панелька с кнопками таймфреймов */
         .timeframe-panel {
             display: flex;
             gap: 4px;
@@ -32,28 +30,12 @@
             transition: all 0.2s;
             border: 1px solid #3a3f4b;
         }
-        .tf-btn:hover {
-            background: #3a3f4b;
-            color: white;
-        }
-        .tf-btn.active {
-            background: #2962ff;
-            color: white;
-            border-color: #2962ff;
-        }
+        .tf-btn:hover { background: #3a3f4b; color: white; }
+        .tf-btn.active { background: #2962ff; color: white; border-color: #2962ff; }
         
-        /* Контейнер для графика занимает всё оставшееся место */
-        .chart-container {
-            flex: 1;
-            width: 100%;
-            position: relative;
-        }
-        #chart {
-            width: 100%;
-            height: 100%;
-        }
+        .chart-container { flex: 1; width: 100%; position: relative; }
+        #chart { width: 100%; height: 100%; }
 
-        /* Правая часть — скринер */
         .screener-container {
             flex: 1;
             height: 100vh;
@@ -90,20 +72,17 @@
         .negative { color: #ef5350; }
         .active .positive, .active .negative { color: inherit; }
     </style>
-    <!-- Lightweight Charts -->
     <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 </head>
 <body>
     <div class="container">
         <div class="chart-wrapper">
-            <!-- Кнопки таймфреймов -->
             <div class="timeframe-panel">
                 <button class="tf-btn active" data-interval="1m">1m</button>
                 <button class="tf-btn" data-interval="5m">5m</button>
                 <button class="tf-btn" data-interval="30m">30m</button>
                 <button class="tf-btn" data-interval="4h">4h</button>
             </div>
-            <!-- Контейнер графика -->
             <div class="chart-container">
                 <div id="chart"></div>
             </div>
@@ -117,127 +96,180 @@
 
     <script>
         (function() {
-            // --- 1. Инициализация графика с принудительной тёмной темой ---
+            // --- 1. График (тёмная тема, без маркеров) ---
             const chartContainer = document.getElementById('chart');
             const chart = LightweightCharts.createChart(chartContainer, {
                 width: chartContainer.clientWidth,
                 height: chartContainer.clientHeight,
-                layout: {
-                    backgroundColor: '#1e1e1e',
-                    textColor: '#d1d4dc',
-                },
-                grid: {
-                    vertLines: { color: '#3a3f4b' },
-                    horzLines: { color: '#3a3f4b' },
-                },
+                layout: { backgroundColor: '#1e1e1e', textColor: '#d1d4dc' },
+                grid: { vertLines: { color: '#3a3f4b' }, horzLines: { color: '#3a3f4b' } },
                 crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
                 timeScale: { timeVisible: true, secondsVisible: false },
-                theme: 'dark',   // ← КЛЮЧЕВОЙ ПАРАМЕТР: принудительно тёмная тема
+                theme: 'dark',
             });
 
-            // Основная свечная серия
             const candlestickSeries = chart.addCandlestickSeries({
-                upColor: '#26a69a',
-                downColor: '#ef5350',
-                borderVisible: false,
-                wickUpColor: '#26a69a',
-                wickDownColor: '#ef5350',
+                upColor: '#26a69a', downColor: '#ef5350',
+                borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350',
             });
 
-            // Серии для EMA с отключёнными маркерами
             const ema65Series = chart.addLineSeries({
-                color: '#ff9800',
-                lineWidth: 1,
-                lastValueVisible: false,
-                priceLineVisible: false,
-                pointMarkersVisible: false,
-                crosshairMarkerVisible: false,
+                color: '#ff9800', lineWidth: 1, lastValueVisible: false,
+                priceLineVisible: false, pointMarkersVisible: false, crosshairMarkerVisible: false,
             });
             const ema125Series = chart.addLineSeries({
-                color: '#2196f3',
-                lineWidth: 1,
-                lastValueVisible: false,
-                priceLineVisible: false,
-                pointMarkersVisible: false,
-                crosshairMarkerVisible: false,
+                color: '#2196f3', lineWidth: 1, lastValueVisible: false,
+                priceLineVisible: false, pointMarkersVisible: false, crosshairMarkerVisible: false,
             });
             const ema450Series = chart.addLineSeries({
-                color: '#9c27b0',
-                lineWidth: 1,
-                lastValueVisible: false,
-                priceLineVisible: false,
-                pointMarkersVisible: false,
-                crosshairMarkerVisible: false,
+                color: '#9c27b0', lineWidth: 1, lastValueVisible: false,
+                priceLineVisible: false, pointMarkersVisible: false, crosshairMarkerVisible: false,
             });
 
-            // Адаптация размера при изменении окна
-            window.addEventListener('resize', () => {
-                chart.applyOptions({
-                    width: chartContainer.clientWidth,
-                    height: chartContainer.clientHeight,
-                });
-            });
+            window.addEventListener('resize', () => chart.applyOptions({
+                width: chartContainer.clientWidth, height: chartContainer.clientHeight
+            }));
 
-            // --- 2. Настройка API Binance ---
+            // --- 2. Состояние ---
             const API_BASE = 'https://api.binance.com/api/v3';
             let currentAssetSymbol = 'BTCUSDT';
             let currentInterval = '1m';
+            
+            // WebSocket
+            let ws = null;
+            let wsReconnectTimer = null;
+            let activeSubscriptions = new Set();
 
-            // Функция расчёта EMA (экспоненциальная скользящая средняя)
+            // Данные для индикаторов (храним последние 500 свечей)
+            let candleData = [];
+
+            // --- 3. Расчёт EMA ---
             function calculateEMA(data, period) {
+                if (data.length === 0) return [];
                 const k = 2 / (period + 1);
                 const emaArray = [];
                 let prevEma = data[0].close;
                 emaArray.push({ time: data[0].time, value: prevEma });
-                
                 for (let i = 1; i < data.length; i++) {
-                    const close = data[i].close;
-                    const ema = close * k + prevEma * (1 - k);
+                    const ema = data[i].close * k + prevEma * (1 - k);
                     emaArray.push({ time: data[i].time, value: ema });
                     prevEma = ema;
                 }
                 return emaArray;
             }
 
-            // Загрузка данных графика и индикаторов
-            async function loadChartData(symbol, interval) {
-                const url = `${API_BASE}/klines?symbol=${symbol}&interval=${interval}&limit=500`;
-                try {
-                    const response = await fetch(url);
-                    const json = await response.json();
-                    
-                    const data = json.map(item => ({
-                        time: Math.floor(item[0] / 1000),
-                        open: parseFloat(item[1]),
-                        high: parseFloat(item[2]),
-                        low: parseFloat(item[3]),
-                        close: parseFloat(item[4]),
-                    }));
-                    
-                    candlestickSeries.setData(data);
-
-                    const ema65 = calculateEMA(data, 65);
-                    const ema125 = calculateEMA(data, 125);
-                    const ema450 = calculateEMA(data, 450);
-                    
-                    ema65Series.setData(ema65);
-                    ema125Series.setData(ema125);
-                    ema450Series.setData(ema450);
-                } catch (error) {
-                    console.error('Ошибка загрузки данных графика:', error);
-                }
+            function updateIndicators() {
+                if (candleData.length === 0) return;
+                const ema65 = calculateEMA(candleData, 65);
+                const ema125 = calculateEMA(candleData, 125);
+                const ema450 = calculateEMA(candleData, 450);
+                ema65Series.setData(ema65);
+                ema125Series.setData(ema125);
+                ema450Series.setData(ema450);
             }
 
-            // --- 3. Загрузка списка монет ---
+            // --- 4. Загрузка истории через REST ---
+            async function fetchHistory(symbol, interval) {
+                const url = `${API_BASE}/klines?symbol=${symbol}&interval=${interval}&limit=500`;
+                const resp = await fetch(url);
+                const json = await resp.json();
+                const data = json.map(item => ({
+                    time: Math.floor(item[0] / 1000),
+                    open: parseFloat(item[1]),
+                    high: parseFloat(item[2]),
+                    low: parseFloat(item[3]),
+                    close: parseFloat(item[4]),
+                }));
+                candleData = data;
+                candlestickSeries.setData(data);
+                updateIndicators();
+            }
+
+            // --- 5. WebSocket для реалтайма ---
+            function closeWebSocket() {
+                if (ws) {
+                    ws.close();
+                    ws = null;
+                }
+                if (wsReconnectTimer) {
+                    clearTimeout(wsReconnectTimer);
+                    wsReconnectTimer = null;
+                }
+                activeSubscriptions.clear();
+            }
+
+            function subscribeWebSocket(symbol, interval) {
+                closeWebSocket();
+                
+                const streamName = `${symbol.toLowerCase()}@kline_${interval}`;
+                activeSubscriptions.add(streamName);
+                
+                ws = new WebSocket('wss://stream.binance.com:9443/ws');
+                
+                ws.onopen = () => {
+                    console.log('WebSocket connected, subscribing to', streamName);
+                    ws.send(JSON.stringify({
+                        method: 'SUBSCRIBE',
+                        params: [streamName],
+                        id: 1
+                    }));
+                };
+                
+                ws.onmessage = (event) => {
+                    const msg = JSON.parse(event.data);
+                    const kline = msg.k;
+                    if (!kline) return;
+                    
+                    // Проверяем, что свеча окончательная (закрыта) или это обновление текущей
+                    const isFinal = kline.x;
+                    
+                    const newCandle = {
+                        time: Math.floor(kline.t / 1000),
+                        open: parseFloat(kline.o),
+                        high: parseFloat(kline.h),
+                        low: parseFloat(kline.l),
+                        close: parseFloat(kline.c),
+                    };
+                    
+                    // Обновляем последнюю свечу в candleData
+                    if (candleData.length > 0 && candleData[candleData.length - 1].time === newCandle.time) {
+                        // Обновление существующей свечи
+                        candleData[candleData.length - 1] = newCandle;
+                        candlestickSeries.update(newCandle);
+                    } else {
+                        // Новая свеча
+                        candleData.push(newCandle);
+                        // Ограничим историю 500 элементами
+                        if (candleData.length > 500) candleData.shift();
+                        candlestickSeries.update(newCandle);
+                    }
+                    
+                    // Обновляем индикаторы (можно оптимизировать, но для 500 свечей быстро)
+                    updateIndicators();
+                };
+                
+                ws.onerror = (error) => console.error('WebSocket error:', error);
+                
+                ws.onclose = () => {
+                    console.log('WebSocket closed, reconnect in 3s');
+                    // Автопереподключение через 3 секунды
+                    wsReconnectTimer = setTimeout(() => {
+                        if (activeSubscriptions.size > 0) {
+                            subscribeWebSocket(currentAssetSymbol, currentInterval);
+                        }
+                    }, 3000);
+                };
+            }
+
+            // --- 6. Загрузка списка монет (топ 50 по росту) ---
             async function loadCoinList() {
                 try {
-                    const exchangeInfoResponse = await fetch(`${API_BASE}/exchangeInfo`);
-                    const exchangeInfo = await exchangeInfoResponse.json();
-                    
+                    const exchangeInfoResp = await fetch(`${API_BASE}/exchangeInfo`);
+                    const exchangeInfo = await exchangeInfoResp.json();
                     const usdtPairs = exchangeInfo.symbols.filter(s => s.symbol.endsWith('USDT'));
                     
-                    const tickersResponse = await fetch(`${API_BASE}/ticker/24hr`);
-                    const tickers = await tickersResponse.json();
+                    const tickersResp = await fetch(`${API_BASE}/ticker/24hr`);
+                    const tickers = await tickersResp.json();
                     
                     const coinData = usdtPairs
                         .map(pair => {
@@ -249,7 +281,7 @@
                                 changePercent: parseFloat(ticker.priceChangePercent),
                             };
                         })
-                        .filter(coin => coin !== null)
+                        .filter(c => c !== null)
                         .sort((a, b) => b.changePercent - a.changePercent)
                         .slice(0, 50);
                     
@@ -270,7 +302,10 @@
                         
                         li.addEventListener('click', () => {
                             currentAssetSymbol = coin.fullSymbol;
-                            loadChartData(currentAssetSymbol, currentInterval);
+                            // Перезагружаем историю и переподключаем WebSocket
+                            fetchHistory(currentAssetSymbol, currentInterval).then(() => {
+                                subscribeWebSocket(currentAssetSymbol, currentInterval);
+                            });
                             document.querySelectorAll('.coin-item').forEach(el => el.classList.remove('active'));
                             li.classList.add('active');
                         });
@@ -282,7 +317,7 @@
                 }
             }
 
-            // --- 4. Обработчики кнопок таймфрейма ---
+            // --- 7. Обработчики кнопок таймфрейма ---
             const tfButtons = document.querySelectorAll('.tf-btn');
             tfButtons.forEach(btn => {
                 btn.addEventListener('click', () => {
@@ -290,16 +325,19 @@
                     if (interval === currentInterval) return;
                     
                     currentInterval = interval;
-                    
                     tfButtons.forEach(b => b.classList.remove('active'));
                     btn.classList.add('active');
                     
-                    loadChartData(currentAssetSymbol, currentInterval);
+                    fetchHistory(currentAssetSymbol, currentInterval).then(() => {
+                        subscribeWebSocket(currentAssetSymbol, currentInterval);
+                    });
                 });
             });
 
-            // --- 5. Старт ---
-            loadChartData(currentAssetSymbol, currentInterval);
+            // --- 8. Старт ---
+            fetchHistory(currentAssetSymbol, currentInterval).then(() => {
+                subscribeWebSocket(currentAssetSymbol, currentInterval);
+            });
             loadCoinList();
         })();
     </script>
