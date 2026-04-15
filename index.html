@@ -6,11 +6,11 @@
     <title>Крипто скринер</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        html, body { width: 100%; height: 100vh; overflow: hidden; background: #0e1117; font-family: sans-serif; }
+        html, body { width: 100%; height: 100vh; overflow: hidden; background: #0e1117; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
         .container { display: flex; width: 100%; height: 100vh; }
         .chart-container { flex: 4; height: 100vh; position: relative; }
         .screener-container { flex: 1; height: 100vh; border-left: 1px solid #2a2e39; background: #131722; color: #d1d4dc; display: flex; flex-direction: column; overflow-y: auto; }
-        .screener-header { padding: 12px 10px; border-bottom: 1px solid #2a2e39; font-weight: 600; }
+        .screener-header { padding: 12px 10px; border-bottom: 1px solid #2a2e39; font-weight: 600; position: sticky; top: 0; background: #131722; z-index: 10; }
         .coin-list { list-style: none; }
         .coin-item { display: flex; justify-content: space-between; padding: 10px 10px; border-bottom: 1px solid #2a2e39; cursor: pointer; transition: background 0.2s; }
         .coin-item:hover { background: #1e222d; }
@@ -22,17 +22,15 @@
         .active .positive, .active .negative { color: inherit; }
         #chart { width: 100%; height: 100%; }
     </style>
-    <!-- Подключаем библиотеку графиков от TradingView -->
-    <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+    <!-- Подключаем Lightweight Charts -->
+    <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 </head>
 <body>
     <div class="container">
-        <!-- Левая часть: График -->
         <div class="chart-container">
             <div id="chart"></div>
         </div>
         
-        <!-- Правая часть: Скринер -->
         <div class="screener-container">
             <div class="screener-header">📋 Топ 50 монет (24ч)</div>
             <ul class="coin-list" id="coin-list"></ul>
@@ -42,7 +40,10 @@
     <script>
         (function() {
             // --- 1. Инициализация графика ---
-            const chart = LightweightCharts.createChart(document.getElementById('chart'), {
+            const chartContainer = document.getElementById('chart');
+            const chart = LightweightCharts.createChart(chartContainer, {
+                width: chartContainer.clientWidth,
+                height: chartContainer.clientHeight,
                 layout: {
                     backgroundColor: '#0e1117',
                     textColor: '#d1d4dc',
@@ -51,10 +52,11 @@
                     vertLines: { color: '#2a2e39' },
                     horzLines: { color: '#2a2e39' },
                 },
-                crosshair: { mode: 1 },
+                crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
                 timeScale: { timeVisible: true, secondsVisible: false },
             });
 
+            // Создаём свечную серию (правильный метод)
             const candlestickSeries = chart.addCandlestickSeries({
                 upColor: '#26a69a',
                 downColor: '#ef5350',
@@ -63,22 +65,30 @@
                 wickDownColor: '#ef5350',
             });
 
+            // Обработчик изменения размера окна
+            window.addEventListener('resize', () => {
+                chart.applyOptions({
+                    width: chartContainer.clientWidth,
+                    height: chartContainer.clientHeight,
+                });
+            });
+
             // --- 2. Настройка API ---
             const API_BASE = 'https://api.coincap.io/v2';
             let currentAssetId = 'bitcoin';
             let currentInterval = 'h1';
 
-            // --- 3. Функция для загрузки данных графика ---
+            // --- 3. Загрузка данных графика ---
             async function loadChartData(assetId, interval) {
                 const now = Date.now();
-                const start = now - 7 * 24 * 60 * 60 * 1000; // За последние 7 дней
+                const start = now - 7 * 24 * 60 * 60 * 1000; // 7 дней
                 const url = `${API_BASE}/assets/${assetId}/history?interval=${interval}&start=${start}&end=${now}`;
                 
                 try {
                     const response = await fetch(url);
                     const json = await response.json();
                     const data = json.data.map(item => ({
-                        time: item.time / 1000,
+                        time: Math.floor(item.time / 1000), // Время в секундах
                         open: parseFloat(item.priceUsd),
                         high: parseFloat(item.priceUsd),
                         low: parseFloat(item.priceUsd),
@@ -86,18 +96,18 @@
                     }));
                     candlestickSeries.setData(data);
                 } catch (error) {
-                    console.error('Ошибка загрузки данных:', error);
+                    console.error('Ошибка загрузки данных графика:', error);
                 }
             }
 
-            // --- 4. Функция для загрузки и отрисовки списка монет ---
+            // --- 4. Загрузка и отрисовка списка монет ---
             async function loadCoinList() {
                 try {
                     const response = await fetch(`${API_BASE}/assets?limit=50`);
                     const json = await response.json();
                     const assets = json.data;
                     
-                    // Сортировка по убыванию изменения за 24 часа
+                    // Сортируем по убыванию изменения за 24ч
                     assets.sort((a, b) => parseFloat(b.changePercent24Hr) - parseFloat(a.changePercent24Hr));
                     
                     const listEl = document.getElementById('coin-list');
@@ -118,7 +128,7 @@
                         li.addEventListener('click', () => {
                             currentAssetId = asset.id;
                             loadChartData(currentAssetId, currentInterval);
-                            // Обновляем активный элемент в списке
+                            // Обновляем активный класс
                             document.querySelectorAll('.coin-item').forEach(el => el.classList.remove('active'));
                             li.classList.add('active');
                         });
