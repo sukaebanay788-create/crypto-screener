@@ -56,7 +56,6 @@
                 timeScale: { timeVisible: true, secondsVisible: false },
             });
 
-            // Создаём свечную серию (правильный метод)
             const candlestickSeries = chart.addCandlestickSeries({
                 upColor: '#26a69a',
                 downColor: '#ef5350',
@@ -65,7 +64,6 @@
                 wickDownColor: '#ef5350',
             });
 
-            // Обработчик изменения размера окна
             window.addEventListener('resize', () => {
                 chart.applyOptions({
                     width: chartContainer.clientWidth,
@@ -73,27 +71,26 @@
                 });
             });
 
-            // --- 2. Настройка API ---
-            const API_BASE = 'https://api.coincap.io/v2';
-            let currentAssetId = 'bitcoin';
-            let currentInterval = 'h1';
+            // --- 2. Настройка API (теперь Binance) ---
+            const API_BASE = 'https://api.binance.com/api/v3';
+            let currentAssetSymbol = 'BTCUSDT';
+            let currentInterval = '1h';
 
             // --- 3. Загрузка данных графика ---
-            async function loadChartData(assetId, interval) {
-                const now = Date.now();
-                const start = now - 7 * 24 * 60 * 60 * 1000; // 7 дней
-                const url = `${API_BASE}/assets/${assetId}/history?interval=${interval}&start=${start}&end=${now}`;
-                
+            async function loadChartData(symbol, interval) {
+                const url = `${API_BASE}/klines?symbol=${symbol}&interval=${interval}&limit=500`;
                 try {
                     const response = await fetch(url);
                     const json = await response.json();
-                    const data = json.data.map(item => ({
-                        time: Math.floor(item.time / 1000), // Время в секундах
-                        open: parseFloat(item.priceUsd),
-                        high: parseFloat(item.priceUsd),
-                        low: parseFloat(item.priceUsd),
-                        close: parseFloat(item.priceUsd),
+                    
+                    const data = json.map(item => ({
+                        time: Math.floor(item[0] / 1000), // Время в секундах
+                        open: parseFloat(item[1]),
+                        high: parseFloat(item[2]),
+                        low: parseFloat(item[3]),
+                        close: parseFloat(item[4]),
                     }));
+                    
                     candlestickSeries.setData(data);
                 } catch (error) {
                     console.error('Ошибка загрузки данных графика:', error);
@@ -103,31 +100,50 @@
             // --- 4. Загрузка и отрисовка списка монет ---
             async function loadCoinList() {
                 try {
-                    const response = await fetch(`${API_BASE}/assets?limit=50`);
-                    const json = await response.json();
-                    const assets = json.data;
+                    // Получаем информацию о всех торговых парах
+                    const exchangeInfoResponse = await fetch(`${API_BASE}/exchangeInfo`);
+                    const exchangeInfo = await exchangeInfoResponse.json();
                     
-                    // Сортируем по убыванию изменения за 24ч
-                    assets.sort((a, b) => parseFloat(b.changePercent24Hr) - parseFloat(a.changePercent24Hr));
+                    // Фильтруем только USDT пары
+                    const usdtPairs = exchangeInfo.symbols.filter(s => s.symbol.endsWith('USDT'));
+                    
+                    // Получаем 24-часовую статистику для первых 50 пар
+                    const tickersResponse = await fetch(`${API_BASE}/ticker/24hr`);
+                    const tickers = await tickersResponse.json();
+                    
+                    // Объединяем информацию о символах с их статистикой
+                    const coinData = usdtPairs
+                        .map(pair => {
+                            const ticker = tickers.find(t => t.symbol === pair.symbol);
+                            if (!ticker) return null;
+                            return {
+                                symbol: pair.symbol.replace('USDT', ''),
+                                fullSymbol: pair.symbol,
+                                changePercent: parseFloat(ticker.priceChangePercent),
+                            };
+                        })
+                        .filter(coin => coin !== null)
+                        .sort((a, b) => b.changePercent - a.changePercent) // Сортируем по росту
+                        .slice(0, 50); // Берём топ-50
                     
                     const listEl = document.getElementById('coin-list');
                     listEl.innerHTML = '';
                     
-                    assets.forEach(asset => {
-                        const change = parseFloat(asset.changePercent24Hr);
+                    coinData.forEach(coin => {
+                        const change = coin.changePercent;
                         const changeStr = change.toFixed(2) + '%';
                         const changeClass = change >= 0 ? 'positive' : 'negative';
                         
                         const li = document.createElement('li');
-                        li.className = 'coin-item' + (asset.id === currentAssetId ? ' active' : '');
+                        li.className = 'coin-item' + (coin.fullSymbol === currentAssetSymbol ? ' active' : '');
                         li.innerHTML = `
-                            <span class="coin-symbol">${asset.symbol}</span>
+                            <span class="coin-symbol">${coin.symbol}</span>
                             <span class="coin-change ${changeClass}">${changeStr}</span>
                         `;
                         
                         li.addEventListener('click', () => {
-                            currentAssetId = asset.id;
-                            loadChartData(currentAssetId, currentInterval);
+                            currentAssetSymbol = coin.fullSymbol;
+                            loadChartData(currentAssetSymbol, currentInterval);
                             // Обновляем активный класс
                             document.querySelectorAll('.coin-item').forEach(el => el.classList.remove('active'));
                             li.classList.add('active');
@@ -141,7 +157,7 @@
             }
 
             // --- 5. Запуск ---
-            loadChartData(currentAssetId, currentInterval);
+            loadChartData(currentAssetSymbol, currentInterval);
             loadCoinList();
         })();
     </script>
