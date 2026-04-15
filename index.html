@@ -6,29 +6,107 @@
     <title>Крипто скринер</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        html, body { width: 100%; height: 100vh; overflow: hidden; background: #0e1117; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+        html, body { width: 100%; height: 100vh; overflow: hidden; background: #1e1e1e; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
         .container { display: flex; width: 100%; height: 100vh; }
-        .chart-container { flex: 4; height: 100vh; position: relative; }
-        .screener-container { flex: 1; height: 100vh; border-left: 1px solid #2a2e39; background: #131722; color: #d1d4dc; display: flex; flex-direction: column; overflow-y: auto; }
-        .screener-header { padding: 12px 10px; border-bottom: 1px solid #2a2e39; font-weight: 600; position: sticky; top: 0; background: #131722; z-index: 10; }
+        
+        /* Левая часть — график */
+        .chart-wrapper { flex: 4; height: 100vh; display: flex; flex-direction: column; background: #1e1e1e; }
+        
+        /* Панелька с кнопками таймфреймов */
+        .timeframe-panel {
+            display: flex;
+            gap: 4px;
+            padding: 6px 8px;
+            background: #1e1e1e;
+            border-bottom: 1px solid #3a3f4b;
+        }
+        .tf-btn {
+            background: #2a2e39;
+            border: none;
+            color: #b0b5c0;
+            font-size: 12px;
+            font-weight: 500;
+            padding: 4px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: 1px solid #3a3f4b;
+        }
+        .tf-btn:hover {
+            background: #3a3f4b;
+            color: white;
+        }
+        .tf-btn.active {
+            background: #2962ff;
+            color: white;
+            border-color: #2962ff;
+        }
+        
+        /* Контейнер для графика занимает всё оставшееся место */
+        .chart-container {
+            flex: 1;
+            width: 100%;
+            position: relative;
+        }
+        #chart {
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Правая часть — скринер */
+        .screener-container {
+            flex: 1;
+            height: 100vh;
+            border-left: 1px solid #3a3f4b;
+            background: #1e1e1e;
+            color: #d1d4dc;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+        }
+        .screener-header {
+            padding: 12px 10px;
+            border-bottom: 1px solid #3a3f4b;
+            font-weight: 600;
+            position: sticky;
+            top: 0;
+            background: #1e1e1e;
+            z-index: 10;
+        }
         .coin-list { list-style: none; }
-        .coin-item { display: flex; justify-content: space-between; padding: 10px 10px; border-bottom: 1px solid #2a2e39; cursor: pointer; transition: background 0.2s; }
-        .coin-item:hover { background: #1e222d; }
+        .coin-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 10px;
+            border-bottom: 1px solid #3a3f4b;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .coin-item:hover { background: #2a2e39; }
         .coin-item.active { background: #2962ff; color: white; }
         .coin-symbol { font-weight: 600; }
         .coin-change { font-weight: 500; }
         .positive { color: #26a69a; }
         .negative { color: #ef5350; }
         .active .positive, .active .negative { color: inherit; }
-        #chart { width: 100%; height: 100%; }
     </style>
-    <!-- Подключаем Lightweight Charts -->
+    <!-- Lightweight Charts -->
     <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 </head>
 <body>
     <div class="container">
-        <div class="chart-container">
-            <div id="chart"></div>
+        <div class="chart-wrapper">
+            <!-- Кнопки таймфреймов -->
+            <div class="timeframe-panel">
+                <button class="tf-btn active" data-interval="1m">1m</button>
+                <button class="tf-btn" data-interval="5m">5m</button>
+                <button class="tf-btn" data-interval="30m">30m</button>
+                <button class="tf-btn" data-interval="4h">4h</button>
+            </div>
+            <!-- Контейнер графика -->
+            <div class="chart-container">
+                <div id="chart"></div>
+            </div>
         </div>
         
         <div class="screener-container">
@@ -45,17 +123,18 @@
                 width: chartContainer.clientWidth,
                 height: chartContainer.clientHeight,
                 layout: {
-                    backgroundColor: '#0e1117',
+                    backgroundColor: '#1e1e1e',      // Серый фон
                     textColor: '#d1d4dc',
                 },
                 grid: {
-                    vertLines: { color: '#2a2e39' },
-                    horzLines: { color: '#2a2e39' },
+                    vertLines: { color: '#3a3f4b' },
+                    horzLines: { color: '#3a3f4b' },
                 },
                 crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
                 timeScale: { timeVisible: true, secondsVisible: false },
             });
 
+            // Основная свечная серия
             const candlestickSeries = chart.addCandlestickSeries({
                 upColor: '#26a69a',
                 downColor: '#ef5350',
@@ -64,6 +143,12 @@
                 wickDownColor: '#ef5350',
             });
 
+            // Серии для EMA
+            const ema65Series = chart.addLineSeries({ color: '#ff9800', lineWidth: 1, lastValueVisible: false, priceLineVisible: false });
+            const ema125Series = chart.addLineSeries({ color: '#2196f3', lineWidth: 1, lastValueVisible: false, priceLineVisible: false });
+            const ema450Series = chart.addLineSeries({ color: '#9c27b0', lineWidth: 1, lastValueVisible: false, priceLineVisible: false });
+
+            // Адаптация размера при изменении окна
             window.addEventListener('resize', () => {
                 chart.applyOptions({
                     width: chartContainer.clientWidth,
@@ -71,20 +156,37 @@
                 });
             });
 
-            // --- 2. Настройка API (теперь Binance) ---
+            // --- 2. Настройка API Binance ---
             const API_BASE = 'https://api.binance.com/api/v3';
             let currentAssetSymbol = 'BTCUSDT';
-            let currentInterval = '1h';
+            let currentInterval = '1m'; // По умолчанию 1 минута
 
-            // --- 3. Загрузка данных графика ---
+            // Функция расчёта EMA (экспоненциальная скользящая средняя)
+            function calculateEMA(data, period) {
+                const k = 2 / (period + 1);
+                const emaArray = [];
+                let prevEma = data[0].close; // Начальное значение — первая цена закрытия
+                emaArray.push({ time: data[0].time, value: prevEma });
+                
+                for (let i = 1; i < data.length; i++) {
+                    const close = data[i].close;
+                    const ema = close * k + prevEma * (1 - k);
+                    emaArray.push({ time: data[i].time, value: ema });
+                    prevEma = ema;
+                }
+                return emaArray;
+            }
+
+            // Загрузка данных графика и индикаторов
             async function loadChartData(symbol, interval) {
                 const url = `${API_BASE}/klines?symbol=${symbol}&interval=${interval}&limit=500`;
                 try {
                     const response = await fetch(url);
                     const json = await response.json();
                     
+                    // Преобразуем данные свечей
                     const data = json.map(item => ({
-                        time: Math.floor(item[0] / 1000), // Время в секундах
+                        time: Math.floor(item[0] / 1000),
                         open: parseFloat(item[1]),
                         high: parseFloat(item[2]),
                         low: parseFloat(item[3]),
@@ -92,26 +194,31 @@
                     }));
                     
                     candlestickSeries.setData(data);
+
+                    // Рассчитываем и устанавливаем EMA
+                    const ema65 = calculateEMA(data, 65);
+                    const ema125 = calculateEMA(data, 125);
+                    const ema450 = calculateEMA(data, 450);
+                    
+                    ema65Series.setData(ema65);
+                    ema125Series.setData(ema125);
+                    ema450Series.setData(ema450);
                 } catch (error) {
                     console.error('Ошибка загрузки данных графика:', error);
                 }
             }
 
-            // --- 4. Загрузка и отрисовка списка монет ---
+            // --- 3. Загрузка списка монет ---
             async function loadCoinList() {
                 try {
-                    // Получаем информацию о всех торговых парах
                     const exchangeInfoResponse = await fetch(`${API_BASE}/exchangeInfo`);
                     const exchangeInfo = await exchangeInfoResponse.json();
                     
-                    // Фильтруем только USDT пары
                     const usdtPairs = exchangeInfo.symbols.filter(s => s.symbol.endsWith('USDT'));
                     
-                    // Получаем 24-часовую статистику для первых 50 пар
                     const tickersResponse = await fetch(`${API_BASE}/ticker/24hr`);
                     const tickers = await tickersResponse.json();
                     
-                    // Объединяем информацию о символах с их статистикой
                     const coinData = usdtPairs
                         .map(pair => {
                             const ticker = tickers.find(t => t.symbol === pair.symbol);
@@ -123,8 +230,8 @@
                             };
                         })
                         .filter(coin => coin !== null)
-                        .sort((a, b) => b.changePercent - a.changePercent) // Сортируем по росту
-                        .slice(0, 50); // Берём топ-50
+                        .sort((a, b) => b.changePercent - a.changePercent)
+                        .slice(0, 50);
                     
                     const listEl = document.getElementById('coin-list');
                     listEl.innerHTML = '';
@@ -144,7 +251,7 @@
                         li.addEventListener('click', () => {
                             currentAssetSymbol = coin.fullSymbol;
                             loadChartData(currentAssetSymbol, currentInterval);
-                            // Обновляем активный класс
+                            // Обновляем активный класс в списке
                             document.querySelectorAll('.coin-item').forEach(el => el.classList.remove('active'));
                             li.classList.add('active');
                         });
@@ -156,7 +263,25 @@
                 }
             }
 
-            // --- 5. Запуск ---
+            // --- 4. Обработчики кнопок таймфрейма ---
+            const tfButtons = document.querySelectorAll('.tf-btn');
+            tfButtons.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const interval = btn.getAttribute('data-interval');
+                    if (interval === currentInterval) return;
+                    
+                    currentInterval = interval;
+                    
+                    // Обновляем активную кнопку
+                    tfButtons.forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    
+                    // Перезагружаем данные
+                    loadChartData(currentAssetSymbol, currentInterval);
+                });
+            });
+
+            // --- 5. Старт ---
             loadChartData(currentAssetSymbol, currentInterval);
             loadCoinList();
         })();
