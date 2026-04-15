@@ -2,66 +2,138 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Crypto Screener</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Крипто скринер</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        html, body {
-            width: 100%;
-            height: 100vh;
-            overflow: hidden;
-            background-color: #0e1117;
-        }
-        .container {
-            display: flex;
-            width: 100%;
-            height: 100vh;
-        }
-        .chart-container {
-            flex: 4;
-            height: 100vh;
-        }
-        .screener-container {
-            flex: 1;
-            height: 100vh;
-            border-left: 1px solid #2a2e39;
-        }
-        /* Обеспечиваем, что виджеты займут всю доступную область */
-        tv-advanced-chart, tv-screener {
-            display: block;
-            width: 100%;
-            height: 100%;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { width: 100%; height: 100vh; overflow: hidden; background: #0e1117; font-family: sans-serif; }
+        .container { display: flex; width: 100%; height: 100vh; }
+        .chart-container { flex: 4; height: 100vh; position: relative; }
+        .screener-container { flex: 1; height: 100vh; border-left: 1px solid #2a2e39; background: #131722; color: #d1d4dc; display: flex; flex-direction: column; overflow-y: auto; }
+        .screener-header { padding: 12px 10px; border-bottom: 1px solid #2a2e39; font-weight: 600; }
+        .coin-list { list-style: none; }
+        .coin-item { display: flex; justify-content: space-between; padding: 10px 10px; border-bottom: 1px solid #2a2e39; cursor: pointer; transition: background 0.2s; }
+        .coin-item:hover { background: #1e222d; }
+        .coin-item.active { background: #2962ff; color: white; }
+        .coin-symbol { font-weight: 600; }
+        .coin-change { font-weight: 500; }
+        .positive { color: #26a69a; }
+        .negative { color: #ef5350; }
+        .active .positive, .active .negative { color: inherit; }
+        #chart { width: 100%; height: 100%; }
     </style>
+    <!-- Подключаем библиотеку графиков от TradingView -->
+    <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
 </head>
 <body>
     <div class="container">
+        <!-- Левая часть: График -->
         <div class="chart-container">
-            <tv-advanced-chart
-                symbol="BINANCE:BTCUSDT"
-                theme="dark"
-                interval="60"
-                locale="ru"
-                hide_side_toolbar="true"
-                allow_symbol_change="true"
-                disabled_features='["header_widget", "left_toolbar", "control_bar", "timeframes_toolbar"]'
-            ></tv-advanced-chart>
+            <div id="chart"></div>
         </div>
+        
+        <!-- Правая часть: Скринер -->
         <div class="screener-container">
-            <tv-screener
-                market="crypto"
-                default-screen="top_gainers"
-                theme="dark"
-                locale="ru"
-            ></tv-screener>
+            <div class="screener-header">📋 Топ 50 монет (24ч)</div>
+            <ul class="coin-list" id="coin-list"></ul>
         </div>
     </div>
 
-    <!-- Подключаем официальный скрипт-загрузчик виджетов TradingView -->
-    <script src="https://s3.tradingview.com/tradingview-widget-loader.js"></script>
+    <script>
+        (function() {
+            // --- 1. Инициализация графика ---
+            const chart = LightweightCharts.createChart(document.getElementById('chart'), {
+                layout: {
+                    backgroundColor: '#0e1117',
+                    textColor: '#d1d4dc',
+                },
+                grid: {
+                    vertLines: { color: '#2a2e39' },
+                    horzLines: { color: '#2a2e39' },
+                },
+                crosshair: { mode: 1 },
+                timeScale: { timeVisible: true, secondsVisible: false },
+            });
+
+            const candlestickSeries = chart.addCandlestickSeries({
+                upColor: '#26a69a',
+                downColor: '#ef5350',
+                borderVisible: false,
+                wickUpColor: '#26a69a',
+                wickDownColor: '#ef5350',
+            });
+
+            // --- 2. Настройка API ---
+            const API_BASE = 'https://api.coincap.io/v2';
+            let currentAssetId = 'bitcoin';
+            let currentInterval = 'h1';
+
+            // --- 3. Функция для загрузки данных графика ---
+            async function loadChartData(assetId, interval) {
+                const now = Date.now();
+                const start = now - 7 * 24 * 60 * 60 * 1000; // За последние 7 дней
+                const url = `${API_BASE}/assets/${assetId}/history?interval=${interval}&start=${start}&end=${now}`;
+                
+                try {
+                    const response = await fetch(url);
+                    const json = await response.json();
+                    const data = json.data.map(item => ({
+                        time: item.time / 1000,
+                        open: parseFloat(item.priceUsd),
+                        high: parseFloat(item.priceUsd),
+                        low: parseFloat(item.priceUsd),
+                        close: parseFloat(item.priceUsd),
+                    }));
+                    candlestickSeries.setData(data);
+                } catch (error) {
+                    console.error('Ошибка загрузки данных:', error);
+                }
+            }
+
+            // --- 4. Функция для загрузки и отрисовки списка монет ---
+            async function loadCoinList() {
+                try {
+                    const response = await fetch(`${API_BASE}/assets?limit=50`);
+                    const json = await response.json();
+                    const assets = json.data;
+                    
+                    // Сортировка по убыванию изменения за 24 часа
+                    assets.sort((a, b) => parseFloat(b.changePercent24Hr) - parseFloat(a.changePercent24Hr));
+                    
+                    const listEl = document.getElementById('coin-list');
+                    listEl.innerHTML = '';
+                    
+                    assets.forEach(asset => {
+                        const change = parseFloat(asset.changePercent24Hr);
+                        const changeStr = change.toFixed(2) + '%';
+                        const changeClass = change >= 0 ? 'positive' : 'negative';
+                        
+                        const li = document.createElement('li');
+                        li.className = 'coin-item' + (asset.id === currentAssetId ? ' active' : '');
+                        li.innerHTML = `
+                            <span class="coin-symbol">${asset.symbol}</span>
+                            <span class="coin-change ${changeClass}">${changeStr}</span>
+                        `;
+                        
+                        li.addEventListener('click', () => {
+                            currentAssetId = asset.id;
+                            loadChartData(currentAssetId, currentInterval);
+                            // Обновляем активный элемент в списке
+                            document.querySelectorAll('.coin-item').forEach(el => el.classList.remove('active'));
+                            li.classList.add('active');
+                        });
+                        
+                        listEl.appendChild(li);
+                    });
+                } catch (error) {
+                    console.error('Ошибка загрузки списка:', error);
+                }
+            }
+
+            // --- 5. Запуск ---
+            loadChartData(currentAssetId, currentInterval);
+            loadCoinList();
+        })();
+    </script>
 </body>
 </html>
